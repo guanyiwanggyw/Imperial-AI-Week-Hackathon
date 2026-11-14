@@ -8,6 +8,87 @@ I read the other `updates/*.md` files before each change.
 
 ---
 
+## 2026-11-14: Every agent is a live Anam avatar
+
+I read `updates/*.md` first. Nothing had changed since my last entry.
+
+### What it does
+- **One Anam session per agent.** This replaces the single decision-maker session from the brief.
+  - All sessions open in parallel during the countdown.
+  - Each idles in its own tile while listening to the pitch.
+  - Each speaks its own Q&A lines through its own avatar and voice (the ids from the previous entry).
+- **Fallback is per agent:** if one agent's session fails to start or drops, only that agent falls back to its portrait and the browser voice. Its badge says "Voice only", and the others stay live.
+- **Reaction clips** only show on seats that aren't live, since live avatars have their own idle motion.
+- **Cost:** each live agent is billed as its own Anam session, so a 3-agent panel uses 3× the minutes.
+
+### Verified (headless Chrome, real UI, real Anam)
+- **Account limit:** three concurrent sessions work on this account. They connected in 0.8–2.4 s and spoke with 587–648 ms latency.
+- **Full session (investors panel):** all three seats were live with video tracks streaming during the pitch. In Q&A, Priya asked via Anam (625 ms to first audio), then Marcus via Anam (715 ms). Each server log line shows that agent's own avatar id.
+
+### API change (breaking, inside `web/src/avatar` only)
+- **Renamed:** `mainAvatar.ts` → `panelAvatars.ts` (git mv), and `MainAvatar` → `PanelAvatars`.
+  ```ts
+  const avatars = new PanelAvatars()
+  avatars.warm(panel.personas, { anam })      // all agents
+  <Avatar avatars={avatars} persona={p} />    // one per agent
+  await speakAs(avatars, persona, seat, text, signal)
+  avatars.seat(personaId)                     // { status, provider, error }
+  ```
+- **State:** `useAvatarState(avatars)` returns `{ seats: Record<id, SeatState>, speakingId, lines }`. The old top-level `status` / `provider` / `personaId` are gone.
+- **Slots:** `avatarSlotId` is now a function, `avatarSlotId(personaId)`.
+- **`Audience`:** takes `avatars`. `mainId` is gone, and every seat renders `<Avatar>`.
+- **`decisionMaker()`:** still exported (who leads, for Person 2's orchestration), but no longer decides who is live.
+
+### Files
+- `web/src/avatar/panelAvatars.ts` (renamed and rewritten), `Avatar.tsx`
+- `web/src/components/Audience.tsx`, `Session.tsx` (`avatar` → `avatars`; warms all agents), `LiveCaptions.tsx` (import path)
+- `web/src/lib/qna.ts` (import path and comments), `README.md`
+
+---
+
+## 2026-11-14: An Anam avatar id for every agent
+
+I read `updates/*.md` first. Nothing had changed since my last entry.
+
+### What it does
+- **Every built-in agent has its own Anam avatar and voice** in `web/src/personas.ts` (`anamAvatarId`, `anamVoiceId`). Edit them there to change a face. All eight are different:
+
+| Agent | Panel | Anam avatar | `anamAvatarId` | Voice |
+| --- | --- | --- | --- | --- |
+| Priya Shah | investors | Chloe | `7b60ba32-5003-45a3-b4c6-af3d0cd36a40` | Ashleigh |
+| Marcus Webb | investors | Pablo | `8dd64886-ce4b-47d5-b837-619660854768` | Conrad |
+| Elena Kovac | investors | Marie | `81a4d24a-6217-4f3b-87c5-ef8d9eb0031b` | Anika |
+| Sam Okafor | peers | Kevin | `3819079b-72ed-47d8-b9f3-5ed8be7e8a86` | Aryaveer |
+| Maya Lindqvist | peers | Astrid | `bdaaedfa-00f2-417a-8239-8bb89adec682` | Skylar |
+| James Holloway | interview | Marcus | `c8601ae3-9686-4f1f-8e32-7499b470f6b5` | Eastend Steve |
+| Aisha Rahman | interview | Antonia | `a7eb25e8-8c31-460d-a397-8cd8010c76d1` | Elise |
+| Tom Becker | interview | Alister | `85ca4111-d638-4cdc-91b4-513afedcdd20` | Darian |
+
+- **Custom agents:** the custom panel has an "Anam avatar id" field per agent. If it's empty, the server matches one by gender, then appearance, and never repeats a face already used on the panel.
+- **The setup screen shows every agent's Anam avatar:** thumbnail, name and id. Click the tag to copy the id.
+- **Setup and the live session always agree:** on Start, the ids shown are written into the personas, and the session uses exactly those. Verified: Priya went live as Chloe `7b60ba32…`.
+- **Precedence:** the agent's own id, then `ANAM_AVATAR_ID` / `ANAM_VOICE_ID` from `.env`, then the automatic match. Leave the `.env` ones empty, or every agent without its own id gets the same face.
+
+### API
+- `POST /api/avatar/anam-match`
+  - Body: `{ agents: [{ name, gender?, look?, avatarId?, voiceId? }] }`
+  - Returns: `{ agents: [{ avatarId, avatarName, voiceId, voiceName, portrait, fixed }] }`, in seat order.
+- `POST /api/avatar/anam-token` now accepts `avatarId` / `voiceId` from the persona and logs the id it uses.
+
+### Files
+- **New:**
+  - `web/src/avatar/anamMatch.ts`: `matchAnamAvatars()`, `withAnamIds()` and `appearance()`.
+  - `web/src/avatar/AnamTag.tsx`
+- **Changed:**
+  - `server/src/avatar.ts`: `pickFor()` takes the agent's own ids and a set of ids already taken.
+  - `web/src/avatar/drivers.ts`: sends the persona's ids.
+  - `web/src/types.ts`: `Persona.anamAvatarId?` / `anamVoiceId?`.
+  - `web/src/personas.ts`: ids for the 8 agents.
+  - `web/src/components/Setup.tsx`: tags, the custom id field, and ids passed to the session.
+  - `web/src/index.css`, `README.md`
+
+---
+
 ## 2026-11-14: Live captions on the practice screen
 
 I read `updates/Jihu.md` first. **I didn't edit `web/src/eval/**`** (Jihu's). The captions only *read* the transcriber's public fields (`evalRt.transcript.phrases`, `.partial`, `.error`) and import `Phrase` from `web/src/eval`, as Jihu asks.

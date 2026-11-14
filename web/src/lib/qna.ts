@@ -1,11 +1,11 @@
 // Q&A orchestration. One panelist turn at a time, in one of two modes:
-//  - spoken: the question is said through the main avatar (live Anam for the decision-maker,
-//            a voice for the other panelists; browser speech when nothing is configured).
+//  - spoken: the question is said by the asking agent's own live Anam avatar (each agent has one;
+//            an agent whose session failed, or no Anam key, uses browser speech).
 //            The answer comes from the live transcript.
 //  - voice:  the ElevenLabs agent asks, listens and follows up, calling our client tools.
 import { Conversation } from '@elevenlabs/client'
 import { getJson, postJson } from '../api'
-import type { SpeechLog } from '../avatar/mainAvatar'
+import type { SpeechLog } from '../avatar/panelAvatars'
 import type { Persona, QnaTurn, SessionEvent, Slide } from '../types'
 
 export type QnaMode = 'spoken' | 'voice'
@@ -28,7 +28,7 @@ export interface TurnContext {
   onEvent: (e: SessionEvent) => void
   onSpeaking: (speaking: boolean) => void
   onCaption: (text: string) => void
-  /** Says a line as this persona (main avatar or voice). See avatar/mainAvatar.ts speakAs. */
+  /** Says a line as this persona (its live avatar or voice). See avatar/panelAvatars.ts speakAs. */
   say: (text: string, signal: AbortSignal) => Promise<SpeechLog>
 }
 

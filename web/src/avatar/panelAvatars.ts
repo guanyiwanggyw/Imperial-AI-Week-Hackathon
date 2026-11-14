@@ -1,11 +1,12 @@
-// The main avatar: one live session for the whole practice session.
-// The decision-maker persona speaks through it; everyone else speaks through the voice fallback
-// (Person 2's ElevenLabs speak() can replace that branch in speakAs()).
+// The panel's live avatars: one Anam session per agent for the whole practice session.
+// Every agent idles in its own tile while listening and speaks the lines we supply. An agent whose
+// session cannot start (no Anam key, limit reached, network) falls back to its portrait and the
+// browser voice on its own; the others stay live.
 //
-//   const avatar = new MainAvatar()
-//   avatar.warm(persona)               // during the countdown; falls back to browser speech
-//   <Avatar avatar={avatar} ... />     // renders the live video, or the portrait while speaking
-//   await speakAs(avatar, persona, text, signal)
+//   const avatars = new PanelAvatars()
+//   avatars.warm(panel.personas, { anam })      // during the countdown
+//   <Avatar avatars={avatars} persona={p} />    // one per agent; renders its live video or portrait
+//   await speakAs(avatars, persona, seat, text, signal)
 //
 // Every line logs floorOpen → first audio (brief: target under 1 s), and becomes a live caption
 // (state.lines) that reveals the words as they are spoken.
@@ -15,13 +16,17 @@ import { AnamDriver, BrowserSpeechDriver, type AvatarDriver, type AvatarProvider
 
 export type AvatarStatus = 'idle' | 'connecting' | 'live' | 'fallback'
 
-export interface AvatarState {
+export interface SeatState {
   status: AvatarStatus
   provider: AvatarProvider | null
-  personaId: string | null
-  /** Which persona's voice is currently audible (main avatar or a fallback voice). */
-  speakingId: string | null
   error: string | null
+}
+
+export interface AvatarState {
+  /** Per agent id. Missing means idle. */
+  seats: Record<string, SeatState>
+  /** Which agent's voice is currently audible. */
+  speakingId: string | null
   /** Panel lines for live captions, oldest first (last 30). */
   lines: CaptionLine[]
 }
@@ -53,19 +58,20 @@ export interface SpeechLog {
   interrupted: boolean
 }
 
-/** Element the live driver adds its own <video> to. Rendered by <Avatar>. */
-export const avatarSlotId = 'main-avatar-slot'
+/** Element an agent's live driver adds its own <video> to. Rendered by <Avatar>. */
+export const avatarSlotId = (personaId: string) => `avatar-slot-${personaId}`
 
-export class MainAvatar {
-  private state: AvatarState = { status: 'idle', provider: null, personaId: null, speakingId: null, error: null, lines: [] }
+const IDLE: SeatState = { status: 'idle', provider: null, error: null }
+
+export class PanelAvatars {
+  private state: AvatarState = { seats: {}, speakingId: null, lines: [] }
   private now: () => number = () => performance.now() / 1000
   private lineId = 0
   private listeners = new Set<() => void>()
-  private driver: AvatarDriver | null = null
-  private warming: Promise<void> | null = null
+  private drivers = new Map<string, AvatarDriver>()
+  private warming = new Map<string, Promise<void>>()
   /** Bumped by stop(), so a connect that finishes afterwards knows it is stale. */
   private generation = 0
-  private fallbackVoices = new Map<string, BrowserSpeechDriver>()
   readonly log: SpeechLog[] = []
 
   subscribe = (fn: () => void) => {
@@ -73,6 +79,7 @@ export class MainAvatar {
     return () => void this.listeners.delete(fn)
   }
   getState = () => this.state
+  seat = (personaId: string): SeatState => this.state.seats[personaId] ?? IDLE
 
   /** Use the session clock for caption times, so they line up with the transcript. */
   setClock(now: () => number) {
@@ -84,38 +91,48 @@ export class MainAvatar {
     this.listeners.forEach((fn) => fn())
   }
 
+  private setSeat(personaId: string, patch: Partial<SeatState>) {
+    this.set({ seats: { ...this.state.seats, [personaId]: { ...this.seat(personaId), ...patch } } })
+  }
+
   /**
-   * Opens the live avatar for this persona. Safe to call more than once. Never throws: if Anam is
-   * not configured or fails, the avatar runs on the browser voice and the status says so.
-   * The <Avatar> component must be mounted, because Anam streams into its video element.
+   * Opens a live avatar for every agent, in parallel. Safe to call more than once. Never throws:
+   * an agent whose session fails runs on the browser voice and its seat says so.
+   * Each agent's <Avatar> must be mounted, because Anam streams into its slot.
    */
-  warm(persona: Persona, opts: { anam: boolean }): Promise<void> {
-    if (this.warming && this.state.personaId === persona.id) return this.warming
-    this.set({ status: 'connecting', personaId: persona.id, error: null })
+  warm(personas: Persona[], opts: { anam: boolean }): Promise<void> {
+    const generation = this.generation
+    return Promise.all(personas.map((p, seat) => this.warmOne(p, seat, opts, generation))).then(() => undefined)
+  }
+
+  private warmOne(persona: Persona, seat: number, opts: { anam: boolean }, generation: number): Promise<void> {
+    const existing = this.warming.get(persona.id)
+    if (existing) return existing
+    this.setSeat(persona.id, { status: 'connecting', provider: null, error: null })
     const onSpeaking = (s: boolean) => this.setSpeaking(persona.id, s)
-    const generation = ++this.generation
-    this.warming = (async () => {
+    const job = (async () => {
       if (opts.anam) {
         const anam = new AnamDriver(onSpeaking)
         try {
-          await anam.connect(persona, avatarSlotId)
+          await anam.connect(persona, avatarSlotId(persona.id))
           // stop() ran while connecting (e.g. React StrictMode remount): close, never leak a paid session.
           if (generation !== this.generation) return void anam.stop()
-          this.driver = anam
-          this.set({ status: 'live', provider: 'anam' })
+          this.drivers.set(persona.id, anam)
+          this.setSeat(persona.id, { status: 'live', provider: 'anam' })
           return
         } catch (err) {
-          console.warn('[avatar] Anam unavailable, using the browser voice:', err)
+          console.warn(`[avatar] ${persona.id}: Anam unavailable, using the browser voice:`, err)
           void anam.stop()
           if (generation !== this.generation) return
-          this.set({ error: err instanceof Error ? err.message : String(err) })
+          this.setSeat(persona.id, { error: err instanceof Error ? err.message : String(err) })
         }
       }
       if (generation !== this.generation) return
-      this.driver = new BrowserSpeechDriver(onSpeaking, 0, rateFor(persona))
-      this.set({ status: 'fallback', provider: 'browser' })
+      this.drivers.set(persona.id, new BrowserSpeechDriver(onSpeaking, seat, rateFor(persona)))
+      this.setSeat(persona.id, { status: 'fallback', provider: 'browser' })
     })()
-    return this.warming
+    this.warming.set(persona.id, job)
+    return job
   }
 
   private setSpeaking(personaId: string, speaking: boolean) {
@@ -123,22 +140,18 @@ export class MainAvatar {
     else if (this.state.speakingId === personaId) this.set({ speakingId: null })
   }
 
-  /** The main avatar says the line. Waits for warm() if it is still connecting. */
-  async say(text: string, signal?: AbortSignal) {
-    if (this.warming) await this.warming
-    const persona = this.state.personaId
-    if (!this.driver || !persona) throw new Error('The avatar has not been started')
-    return this.record(persona, this.driver, text, signal)
-  }
-
-  /** A panelist without the avatar speaks with a fallback voice. */
-  sayAsVoice(persona: Persona, seat: number, text: string, signal?: AbortSignal) {
-    let voice = this.fallbackVoices.get(persona.id)
-    if (!voice) {
-      voice = new BrowserSpeechDriver((s) => this.setSpeaking(persona.id, s), seat + 1, rateFor(persona))
-      this.fallbackVoices.set(persona.id, voice)
+  /**
+   * The agent says the line through its own avatar (or voice). Waits if its session is still
+   * connecting; an agent that was never warmed speaks with the browser voice.
+   */
+  async say(persona: Persona, seat: number, text: string, signal?: AbortSignal) {
+    await this.warming.get(persona.id)
+    let driver = this.drivers.get(persona.id)
+    if (!driver) {
+      driver = new BrowserSpeechDriver((s) => this.setSpeaking(persona.id, s), seat, rateFor(persona))
+      this.drivers.set(persona.id, driver)
     }
-    return this.record(persona.id, voice, text, signal)
+    return this.record(persona.id, driver, text, signal)
   }
 
   private updateLine(id: number, patch: Partial<CaptionLine>) {
@@ -167,12 +180,12 @@ export class MainAvatar {
     try {
       result = await driver.say(text, signal, onProgress)
     } catch (err) {
-      // A dropped live session should not end the turn: say it with the browser voice instead.
-      console.warn('[avatar] speech failed, retrying with the browser voice:', err)
+      // A dropped live session should not end the turn: this agent continues on the browser voice.
+      console.warn(`[avatar] ${personaId}: speech failed, retrying with the browser voice:`, err)
       const fallback = new BrowserSpeechDriver((s) => this.setSpeaking(personaId, s))
-      if (driver === this.driver) {
-        this.driver = fallback
-        this.set({ status: 'fallback', provider: 'browser', error: err instanceof Error ? err.message : String(err) })
+      if (this.drivers.get(personaId) === driver) {
+        this.drivers.set(personaId, fallback)
+        this.setSeat(personaId, { status: 'fallback', provider: 'browser', error: err instanceof Error ? err.message : String(err) })
       }
       driver = fallback
       result = await fallback.say(text, signal, onProgress)
@@ -192,39 +205,38 @@ export class MainAvatar {
     return entry
   }
 
+  /** Stops whoever is speaking. */
   interrupt() {
-    this.driver?.interrupt()
-    this.fallbackVoices.forEach((v) => v.interrupt())
+    this.drivers.forEach((d) => d.interrupt())
   }
 
   /**
-   * Ends the session. Everything is reset synchronously, before any await, so a warm() that runs
-   * right after (React StrictMode remount) starts a fresh session instead of reusing a stale one.
+   * Ends every session. Everything is reset synchronously, before any await, so a warm() that runs
+   * right after (React StrictMode remount) starts fresh sessions instead of reusing stale ones.
    */
   async stop() {
     this.generation++
-    const driver = this.driver
-    this.driver = null
-    this.warming = null
-    this.fallbackVoices.forEach((v) => v.interrupt())
-    this.set({ status: 'idle', provider: null, speakingId: null })
-    driver?.interrupt()
-    await driver?.stop()
+    const drivers = [...this.drivers.values()]
+    this.drivers.clear()
+    this.warming.clear()
+    this.set({ seats: {}, speakingId: null })
+    drivers.forEach((d) => d.interrupt())
+    await Promise.all(drivers.map((d) => d.stop()))
   }
 }
 
-/** Routes a line to the main avatar if this persona is the decision-maker, otherwise to a voice. */
-export function speakAs(avatar: MainAvatar, persona: Persona, seat: number, text: string, signal?: AbortSignal) {
-  return avatar.getState().personaId === persona.id ? avatar.say(text, signal) : avatar.sayAsVoice(persona, seat, text, signal)
+/** Says a line as this agent, through its own live avatar (or its voice fallback). */
+export function speakAs(avatars: PanelAvatars, persona: Persona, seat: number, text: string, signal?: AbortSignal) {
+  return avatars.say(persona, seat, text, signal)
 }
 
-/** The persona who speaks through the live avatar: the one marked decisionMaker, else the first. */
+/** The agent who leads the panel (Persona.decisionMaker, else the first). For orchestration. */
 export function decisionMaker(personas: Persona[]): Persona | undefined {
   return personas.find((p) => p.decisionMaker) ?? personas[0]
 }
 
 const rateFor = (p: Persona) => 1 - (p.strictness - 3) * 0.03
 
-export function useAvatarState(avatar: MainAvatar) {
-  return useSyncExternalStore(avatar.subscribe, avatar.getState)
+export function useAvatarState(avatars: PanelAvatars) {
+  return useSyncExternalStore(avatars.subscribe, avatars.getState)
 }

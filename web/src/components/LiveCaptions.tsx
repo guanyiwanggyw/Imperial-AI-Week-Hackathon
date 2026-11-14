@@ -1,9 +1,9 @@
 // Live captions for the practice screen: what you said (committed Scribe phrases plus the live
 // partial) and what the panel said (revealed word by word as it is spoken), in time order.
 // Read-only: the transcript comes from the evaluation engine (web/src/eval), the panel lines from
-// the main avatar (web/src/avatar). Nothing here is scored.
+// the panel's avatars (web/src/avatar). Nothing here is scored.
 import { useLayoutEffect, useRef } from 'react'
-import type { CaptionLine } from '../avatar/mainAvatar'
+import type { CaptionLine } from '../avatar/panelAvatars'
 import type { Phrase } from '../eval'
 import type { Persona } from '../types'
 

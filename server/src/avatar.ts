@@ -66,24 +66,37 @@ const avatarGender = (a: Listed): Gender | null => (FEMALE.test(a.description ??
 const words = (s: string) => new Set(s.toLowerCase().match(/[a-z]{4,}/g) ?? []);
 const hash = (s: string) => [...s].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0) >>> 0;
 
+interface AgentInput {
+  name: string;
+  gender?: Gender;
+  /** Appearance text; used to pick the closest-looking avatar */
+  look?: string;
+  /** The agent's own Anam ids (Persona.anamAvatarId / anamVoiceId). These always win. */
+  avatarId?: string;
+  voiceId?: string;
+}
+
 /**
- * Picks an avatar and voice for a persona: env overrides first, then same gender, then the avatar
- * whose description shares the most words with the persona's appearance. Stable per persona name.
+ * Picks an avatar and voice for an agent. The agent's own ids win; then ANAM_AVATAR_ID /
+ * ANAM_VOICE_ID; then a match: same gender, then the avatar whose description shares the most
+ * words with the agent's appearance. Ids in `taken` are avoided so a panel never shares a face.
+ * Stable per agent name.
  */
-async function pickFor(name: string, gender: Gender | undefined, look: string) {
+async function pickFor(agent: AgentInput, taken: Set<string> = new Set()) {
   const { avatars, voices } = await loadCatalog();
-  let avatarId = env.anamAvatarId;
+  const { name, gender } = agent;
+  let avatarId = agent.avatarId || env.anamAvatarId;
   if (!avatarId) {
     const cara4 = avatars.filter((a) => a.activeVersion === "cara-4");
     const base = cara4.length ? cara4 : avatars;
     const sameGender = base.filter((a) => !gender || avatarGender(a) === gender);
-    const pool = sameGender.length ? sameGender : base;
-    const wanted = words(look);
+    const pool = (sameGender.length ? sameGender : base).filter((a) => !taken.has(a.id));
+    const wanted = words(agent.look ?? "");
     const score = (a: Listed) => [...words(a.description ?? "")].filter((w) => wanted.has(w)).length;
     const tie = (a: Listed) => hash(name + a.id) % 997;
-    avatarId = [...pool].sort((a, b) => score(b) - score(a) || tie(a) - tie(b))[0]?.id;
+    avatarId = [...(pool.length ? pool : base)].sort((a, b) => score(b) - score(a) || tie(a) - tie(b))[0]?.id;
   }
-  let voiceId = env.anamVoiceId;
+  let voiceId = agent.voiceId || env.anamVoiceId;
   if (!voiceId) {
     const english = voices.filter((v) => !v.languages || v.languages.includes("en"));
     const sameGender = english.filter((v) => !gender || String(v.gender).toLowerCase() === gender);
@@ -93,9 +106,38 @@ async function pickFor(name: string, gender: Gender | undefined, look: string) {
   if (!avatarId || !voiceId) throw new Error("No Anam avatar or voice found on this account");
   const avatar = avatars.find((a) => a.id === avatarId);
   const voice = voices.find((v) => v.id === voiceId);
-  console.log(`[avatar] ${name}: avatar ${avatar?.displayName ?? avatarId}, voice ${voice?.displayName ?? voiceId}`);
-  return { avatarId, voiceId, avatarName: avatar?.displayName, portrait: avatar?.portraitImageUrl ?? avatar?.imageUrl };
+  return {
+    avatarId,
+    voiceId,
+    avatarName: avatar?.displayName,
+    voiceName: voice?.displayName,
+    portrait: avatar?.portraitImageUrl ?? avatar?.imageUrl,
+    /** Whether the id came from the agent itself rather than the automatic match */
+    fixed: Boolean(agent.avatarId),
+  };
 }
+
+/**
+ * The Anam avatar and voice for each agent on a panel, in seat order, without repeating a face.
+ * Body: { agents: AgentInput[] }. Used by the setup screen to show every agent's avatar id.
+ */
+avatarRouter.post("/anam-match", async (req, res) => {
+  if (!env.anamKey) return res.status(503).json({ error: "Anam is not configured" });
+  const agents = ((req.body as { agents?: AgentInput[] }).agents ?? []).slice(0, 12);
+  try {
+    // Agents with their own ids claim them first, so matched agents avoid those faces.
+    const taken = new Set(agents.map((a) => a.avatarId).filter((id): id is string => Boolean(id)));
+    const out = [];
+    for (const agent of agents) {
+      const pick = await pickFor(agent, taken);
+      taken.add(pick.avatarId);
+      out.push(pick);
+    }
+    res.json({ agents: out });
+  } catch (err) {
+    res.status(502).json({ error: errorMessage(err) });
+  }
+});
 
 /** Avatars and voices on the account, for picking ANAM_AVATAR_ID / ANAM_VOICE_ID. */
 avatarRouter.get("/anam-options", async (_req, res) => {
@@ -128,11 +170,12 @@ avatarRouter.post("/anam-token", async (req, res) => {
   const body = req.body as TokenRequest;
   try {
     const name = body.name || "Panelist";
-    const chosen = await pickFor(name, body.gender, body.look ?? "");
+    const chosen = await pickFor({ name, gender: body.gender, look: body.look, avatarId: body.avatarId, voiceId: body.voiceId });
+    console.log(`[avatar] ${name}: avatar ${chosen.avatarName ?? chosen.avatarId} (${chosen.avatarId}), voice ${chosen.voiceName ?? chosen.voiceId}`);
     const base = {
       name,
-      avatarId: body.avatarId || chosen.avatarId,
-      voiceId: body.voiceId || chosen.voiceId,
+      avatarId: chosen.avatarId,
+      voiceId: chosen.voiceId,
       llmId: "CUSTOMER_CLIENT_V1",
       maxSessionLengthSeconds: 1800,
     };

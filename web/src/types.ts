@@ -24,6 +24,9 @@ export interface Persona {
   idleStyle: string
   /** Speaks through the live main avatar. Defaults to the first persona on the panel. */
   decisionMaker?: boolean
+  /** Anam avatar and voice for this agent. Without them the server matches one by gender and look. */
+  anamAvatarId?: string
+  anamVoiceId?: string
 }
 
 export interface Panel {
