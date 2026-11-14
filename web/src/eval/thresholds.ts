@@ -9,8 +9,8 @@ export const T = {
      * On target when the combined gaze (head angle + eye-in-head angle from the irises), relative to calibration,
      * is within these limits. Turning the head while the eyes stay on the panel still counts.
      */
-    maxGazeYawDeg: 12,
-    maxGazePitchDeg: 14,
+    maxGazeYawDeg: 10,
+    maxGazePitchDeg: 12,
     /** …and the head itself is not turned further than this (beyond it the iris estimate is unreliable). */
     maxHeadYawDeg: 35,
     maxHeadPitchDeg: 30,
@@ -37,7 +37,7 @@ export const T = {
     /** Wrists closer than this (shoulder widths) = hands together (wringing, clasping). */
     handsTogether: 0.35,
     /** Share of speaking time spent gesturing (hand speed in the natural band) that counts as ideal. */
-    gestureShareGood: [0.3, 0.7] as [number, number],
+    gestureShareGood: [0.35, 0.65] as [number, number],
     /** Body sub-score weights (renormalised over the ones that could be measured). */
     weights: { posture: 0.25, openness: 0.15, gestures: 0.25, selfTouch: 0.15, movement: 0.1, expression: 0.1 },
     /** Hand speed (shoulder widths per second) bands for "natural" gesturing. */

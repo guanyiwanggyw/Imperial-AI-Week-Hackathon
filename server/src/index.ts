@@ -10,7 +10,7 @@ import { redactSecrets } from "./redact.js";
 import { llmRouter } from "./llm.js";
 import { agentsRouter } from "./agents.js";
 import { sessionsRouter } from "./sessions.js";
-import { evalRouter } from "./eval/judge.js";
+import { evalRouter } from "./eval/routes.js";
 
 const app = express();
 app.use(express.json({ limit: "25mb" }));

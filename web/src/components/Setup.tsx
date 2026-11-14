@@ -21,7 +21,7 @@ import {
   synthesiaStatus,
   type Assets,
 } from '../lib/media'
-import { blankPersona, DEFAULT_PITCH_SECONDS, DEFAULT_QUESTION_COUNT, PANELS } from '../personas'
+import { blankPersona, DEFAULT_PITCH_SECONDS, DEFAULT_QUESTION_COUNT, drawPanel, PANELS } from '../personas'
 import type { Panel, Persona, SessionConfig, Slide } from '../types'
 
 interface Props {
@@ -58,6 +58,8 @@ async function syncSynthesiaPortraits(current: Assets, personas: Persona[]): Pro
 
 export function Setup({ status, stream, streamError, onRequestMedia, onStart, onOpenSession }: Props) {
   const [panelId, setPanelId] = useState(PANELS[0].id)
+  // A fresh random lineup from each panel's pool every time setup opens; "Shuffle panel" redraws it.
+  const [drawn, setDrawn] = useState<Record<string, Panel>>(() => Object.fromEntries(PANELS.map((p) => [p.id, drawPanel(p)])))
   const [custom, setCustom] = useState<Panel>(customPanel)
   const [slides, setSlides] = useState<Slide[]>([])
   const [deckName, setDeckName] = useState<string | null>(null)
@@ -77,7 +79,7 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
   const preview = useRef<HTMLVideoElement>(null)
   const [level, setLevel] = useState(0)
 
-  const panel = panelId === 'custom' ? custom : PANELS.find((p) => p.id === panelId)!
+  const panel = panelId === 'custom' ? custom : drawn[panelId]
 
   // The Anam avatar for every agent on the panel: their own id, or a match (gender, then look).
   const matchKey = JSON.stringify(panel.personas.map((p) => [p.name, p.look, p.voiceId, p.anamAvatarId, p.anamVoiceId]))
@@ -103,7 +105,7 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
 
   useEffect(() => {
     void loadAssets()
-      .then((a) => syncSynthesiaPortraits(a, PANELS.flatMap((p) => p.personas)))
+      .then((a) => syncSynthesiaPortraits(a, PANELS.flatMap((p) => p.pool ?? p.personas)))
       .then(setAssets)
     getJson<typeof history>('/api/sessions', 5000).then(setHistory, () => setHistory([]))
   }, [])
@@ -365,7 +367,14 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
 
           <div className="stack" style={{ gap: 24 }}>
             <section className="card setup-card">
-              <h2 className="title">Meet your panel</h2>
+              <div className="row" style={{ justifyContent: 'space-between', alignItems: 'baseline', gap: 12 }}>
+                <h2 className="title">Meet your panel</h2>
+                {panelId !== 'custom' && (panel.pool?.length ?? 0) > panel.personas.length && (
+                  <button className="btn quiet" onClick={() => setDrawn((d) => ({ ...d, [panelId]: drawPanel(PANELS.find((p) => p.id === panelId)!) }))}>
+                    Shuffle panel
+                  </button>
+                )}
+              </div>
               <p className="muted">{panel.description}</p>
 
               <div className="experts">

@@ -82,6 +82,11 @@ export class PanelAvatars {
   getState = () => this.state
   seat = (personaId: string): SeatState => this.state.seats[personaId] ?? IDLE
 
+  /** Sends silent context (Anam addContext) to every live avatar on the panel. */
+  addContext(text: string) {
+    this.drivers.forEach((d) => d.addContext?.(text))
+  }
+
   /** Use the session clock for caption times, so they line up with the transcript. */
   setClock(now: () => number) {
     this.now = now

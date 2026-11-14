@@ -1,6 +1,7 @@
 // Pure assembly of an EvaluationResult from collected data. No network, no DOM: usable in the browser,
 // in the fake-data generator and in the calibration CLI.
 import type { AgentTurn, Calibration, ContentEvaluation, EvaluationResult, FeedbackEvent, LandmarkTrack, Phrase, SampleX, ScoreCat, SegmentNote } from './contracts'
+import { gestureCongruence } from './gestures'
 import { mergeInto } from './rules'
 import { bodyBreakdown, buildScoreSeries, computeFinalScores } from './scores'
 import { T } from './thresholds'
@@ -103,6 +104,9 @@ export function assembleEvaluation(input: AssembleInput): EvaluationResult {
   const timingScore = timingMeasured ? timing.score : null
 
   const events: FeedbackEvent[] = i.ruleEvents.map((e) => ({ ...e }))
+  // Gestures that contradict (or reinforce) what was being said, e.g. a thumbs-up while describing a problem.
+  const gestureEvents = insufficientSpeech ? [] : gestureCongruence(i.samples, i.phrases)
+  for (const d of gestureEvents) events.push({ ...d, source: 'rule' })
   if (timingMeasured) for (const d of timing.events) mergeInto(events, { ...d, source: 'rule' })
   const claudeNotes = i.content ? i.content.key_moments : i.segments.flatMap((s) => s.notes)
   for (const d of claudeNotes) events.push({ ...d, source: 'claude' })
@@ -120,7 +124,7 @@ export function assembleEvaluation(input: AssembleInput): EvaluationResult {
     insufficientSpeech,
     lookAwayEvents: ruleNonGood('eye', 'You looked away'),
     monotoneEvents: ruleNonGood('tone', 'Flat pitch'),
-    bodyEvents: i.ruleEvents.filter((e) => e.cat === 'body' && e.severity !== 'good').length,
+    bodyEvents: i.ruleEvents.filter((e) => e.cat === 'body' && e.severity !== 'good').length + gestureEvents.filter((e) => e.severity !== 'good').length,
   })
 
   let coaching: EvaluationResult['coaching']
@@ -147,7 +151,7 @@ export function assembleEvaluation(input: AssembleInput): EvaluationResult {
     agentTurns: i.agentTurns,
     events,
     // No series when nothing was measurable: a silent session should not show moving score bars.
-    scoreSeries: insufficientSpeech ? { eye: [], body: [], tone: [], coherency: [] } : buildScoreSeries(i.samples, i.phrases, i.duration, i.segments),
+    scoreSeries: insufficientSpeech ? { eye: [], body: [], tone: [], coherency: [] } : buildScoreSeries(i.samples, i.phrases, i.duration, i.segments, i.content?.coherency_score ?? null),
     finalScores: scores,
     unmeasured,
     ...(insufficientSpeech ? {} : { bodyBreakdown: bodyBreakdown(i.samples) }),

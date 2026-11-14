@@ -40,6 +40,8 @@ export interface OrchestratorDeps {
   room: () => RoomState | null
   phrases: () => Phrase[]
   samples: () => SampleX[]
+  /** Optional delivery notes from the evaluation (looking away, fidgeting, rambling…) for the line drafts. */
+  delivery?: () => string[]
   /** Speaks as the agent through its avatar; must log the AgentTurn. */
   say: (persona: Persona, seat: number, text: string, signal: AbortSignal) => Promise<SpeechLog>
   /** A question-and-answer exchange finished (for the background judge). */
@@ -239,6 +241,7 @@ export class Orchestrator {
         conversation: conversation.map(({ who, text }) => ({ who, text })),
         latest,
         context: this.deps.context,
+        delivery: this.deps.delivery?.() ?? [],
       },
       15000,
     )

@@ -5,6 +5,7 @@ import { errorText } from '../api'
 import type { DeliveryScore, Report, SessionData, Word } from '../types'
 import { assembleEvaluation, TIPS } from './assemble'
 import type { AgentTurn, Calibration, ContentEvaluation, EvaluationResult, FeedbackEvent, LandmarkTrack, Phrase, SampleX, SegmentNote } from './contracts'
+import { gestureEpisodes, GESTURE_LABEL } from './gestures'
 import { finalJudge, transcriptLines } from './judge'
 import { averageScore, bestMoment, deliveryScores, deliveryStats, findPauses, paceScore, pitchSpread, type DeliveryStats } from './metrics'
 import { sustainedWpm } from './rules'
@@ -71,6 +72,31 @@ export interface BuildOptions {
   skipJudge?: boolean
 }
 
+/**
+ * With speaker labels (diarized accurate transcript): keep the speaker whose words line up with the user's mouth
+ * movement. The panel's voices and other people in the room get other speaker ids. Without labels, all words pass.
+ */
+export function ownSpeakerWords(words: Word[], samples: SampleX[]): Word[] {
+  const speakers = [...new Set(words.map((w) => w.speaker).filter((s): s is string => Boolean(s)))]
+  if (speakers.length < 2 || !samples.some((s) => s.jawOpen != null)) return words
+  const score = (sp: string) => {
+    const ws = words.filter((w) => w.speaker === sp)
+    let moving = 0
+    let seen = 0
+    for (const w of ws) {
+      const near = samples.filter((s) => s.face && s.t >= w.start - 0.2 && s.t <= w.end + 0.2)
+      if (!near.length) continue
+      seen++
+      if (near.some((s) => s.mouthMoving)) moving++
+    }
+    return { sp, n: ws.length, share: seen ? moving / seen : 0 }
+  }
+  const ranked = speakers.map(score).filter((x) => x.n >= 3).sort((a, b) => b.share - a.share || b.n - a.n)
+  if (!ranked.length) return words
+  const own = ranked[0].sp
+  return words.filter((w) => !w.speaker || w.speaker === own)
+}
+
 /** Transcript words inside the phrases attributed to the speaker (drops the panel's lines and other voices). */
 function speakerWords(words: Word[], phrases: Phrase[]): Word[] {
   return words.filter((w) => phrases.some((p) => w.start >= p.t - 0.15 && w.end <= p.end + 0.15))
@@ -109,14 +135,33 @@ function deliveryBars(stats: DeliveryStats, ev: EvaluationResult, own: Word[], s
       const pauses = findPauses(inPitch, session.slideChanges.map((s) => s.t)).filter(
         (p) => p.end - p.start <= 6 && !ev.agentTurns.some((a) => p.start < a.end + 0.5 && p.end > a.t - 0.5),
       )
-      const hes = pauses.filter((p) => p.kind === 'hesitation').length
-      const del = pauses.length - hes
+      const silentHes = pauses.filter((p) => p.kind === 'hesitation').length
+      // Filled pauses ("um", "uh") are hesitations too, just voiced.
+      const filled = inPitch.filter((w) => ['um', 'uh', 'er', 'erm', 'uhm', 'umm', 'uhh', 'ah'].includes(w.text.toLowerCase().replace(/[^a-z]/g, ''))).length
+      const hes = silentHes + filled
+      const del = pauses.length - silentHes
+      const longStalls = pauses.filter((p) => p.kind === 'hesitation' && p.end - p.start > 3).length
       const minutes = Math.max(inPitch.length / Math.max(stats.wpm ?? 140, 60), 0.25)
+      const hesPerMin = hes / minutes
+      const delPerMin = del / minutes
+      // Strict: full marks need deliberate pauses that let points land (2–8 a minute) and no mid-sentence hesitation.
+      let score = 100 - Math.min(70, hesPerMin * 10) - longStalls * 8
+      if (delPerMin < 1) score -= 30
+      else if (delPerMin < 2) score -= 12
+      else if (delPerMin > 10) score -= 15
+      if (hes > 0 || delPerMin < 2 || delPerMin > 8) score = Math.min(score, 90)
       return {
         ...d,
-        score: Math.round(Math.min(100, Math.max(0, 100 - (hes / minutes) * 20 + Math.min(del, 4) * 2.5))),
-        value: `${del} deliberate, ${hes} hesitant`,
-        note: hes > del ? 'Most pauses happen mid-sentence. Pause after a point, not inside it.' : 'Pauses mostly land at the end of points, which reads as confident.',
+        score: Math.round(Math.min(100, Math.max(0, score))),
+        value: `${del} deliberate, ${hes} hesitant${filled ? ` (${filled} um/uh)` : ''}`,
+        note:
+          delPerMin < 1
+            ? 'You barely paused. Stop for a beat after each key point so it lands.'
+            : hes > del
+              ? 'Most pauses happen mid-sentence. Pause after a point, not inside it.'
+              : delPerMin > 10
+                ? 'Very frequent pauses make the delivery choppy. Group your ideas into fuller sentences.'
+                : 'Pauses mostly land at the end of points, which reads as confident.',
       }
     }
     if (d.key === 'eye_contact') return { ...d, score: ev.unmeasured.includes('eye') ? null : ev.finalScores.eye }
@@ -139,11 +184,11 @@ function deliveryBars(stats: DeliveryStats, ev: EvaluationResult, own: Word[], s
   })
 }
 
-export async function buildReport(session: SessionData, capture: EvalCapture | null, opts: BuildOptions = {}): Promise<{ report: Report; evaluation: EvaluationResult }> {
+export async function buildReport(session: SessionData, capture: EvalCapture | null, opts: BuildOptions = {}): Promise<{ report: Report; evaluation: EvaluationResult; ownWords: Word[] }> {
   // Prefer the accurate batch transcript when it replaced the live one (compared by content: identity is lost on reload).
   const sameWords = (a: Word[], b: Word[]) => a.length === b.length && a.every((w, k) => w.text === b[k].text && Math.abs(w.start - b[k].start) < 0.01)
   const accurate = !sameWords(session.words, session.liveWords)
-  const phrases = capture && !accurate ? capture.phrases : phrasesFromWords(session.words)
+  const phrases = capture && !accurate ? capture.phrases : phrasesFromWords(ownSpeakerWords(session.words, capture?.samples ?? []))
   const base = {
     samples: capture?.samples ?? [],
     phrases,
@@ -192,6 +237,7 @@ export async function buildReport(session: SessionData, capture: EvalCapture | n
             words_per_minute: stats.wpm && Math.round(stats.wpm),
             fillers_per_minute: Number(stats.fillersPerMin.toFixed(1)),
             slide_changes: session.slideChanges.map((s) => ({ t: Math.round(s.t), slide: s.slide + 1 })),
+            gestures: gestureEpisodes(base.samples).map((g) => `${g.t.toFixed(1)}s ${GESTURE_LABEL[g.kind]}`),
           },
           ruleEvents: base.ruleEvents.map((e) => `[${e.t}s] ${e.cat}/${e.severity}: ${e.msg}`),
           bestMoment: best,
@@ -229,5 +275,5 @@ export async function buildReport(session: SessionData, capture: EvalCapture | n
     bestMoment: best ? { ...best, note: content?.best_moment_note ?? 'Steady pace, few fillers and good energy in this stretch.' } : null,
     priorities,
   }
-  return { report, evaluation }
+  return { report, evaluation, ownWords: own }
 }

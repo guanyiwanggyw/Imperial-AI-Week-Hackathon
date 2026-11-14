@@ -2,6 +2,7 @@
 // critical path); the final merge is one streamed call at the end.
 import { postJson } from '../api'
 import type { AgentTurn, ContentEvaluation, FeedbackEvent, Phrase, SampleX, SegmentNote } from './contracts'
+import { gestureEpisodes, GESTURE_LABEL } from './gestures'
 import { pitchSpread } from './metrics'
 import { wpmIn } from './rules'
 
@@ -37,6 +38,8 @@ export function signalSummary(samples: SampleX[], phrases: Phrase[], from: numbe
       (s) => s.handSpeed >= 0.05 && s.handSpeed <= 1.2,
     ),
     fidget_frames: win.filter((s) => s.handsTogether && s.handSpeed > 0.05).length,
+    // Judge whether each gesture fits what was being said at that moment.
+    gestures: gestureEpisodes(win).map((g) => `${g.t.toFixed(1)}s ${GESTURE_LABEL[g.kind]}`),
     mean_slouch_0_1: face.length ? r(face.reduce((a, s) => a + s.slouch, 0) / face.length) : null,
     speaking_share: share(win, (s) => s.speaking),
     pitch_variety_semitones: spread === null ? null : r(spread, 1),

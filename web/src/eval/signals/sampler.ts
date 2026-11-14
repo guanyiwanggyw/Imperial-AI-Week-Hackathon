@@ -3,6 +3,7 @@ import type { AudioSample, VisionSample } from '../../types'
 import type { Calibration, LandmarkTrack, SampleX } from '../contracts'
 import { FACE_IDX, POSE_IDX } from '../debug/draw'
 import { emptyTrack, encodeFrame } from '../landmarks'
+import { frameGesture } from '../gestures'
 import { DEFAULT_CALIBRATION, facingRatio, headRise } from '../calibration'
 import { T } from '../thresholds'
 import type { AudioMeter } from './audio'
@@ -95,6 +96,7 @@ export function visionToSample(frame: VisionFrame | null, cal: Calibration): Vis
     armSpan: armSpan === null ? null : round(armSpan),
     handsTogether,
     handsHidden,
+    gesture: frame.raw.hands.length ? frameGesture(frame.raw.hands, frame.aspect) : null,
   }
 }
 

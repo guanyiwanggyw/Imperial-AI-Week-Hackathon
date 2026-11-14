@@ -1,6 +1,8 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { Layers } from '../eval/debug/draw'
 import { expressiveness, eyeContactShare, fillerIndices, findPauses, formatTime, wpmBetween, windows } from '../eval/metrics'
+import { DoItBetter } from '../eval/playback/DoItBetter'
+import { eventItems, LiveNotes, ScoresAt } from '../eval/playback/FeedbackPanels'
 import { LandmarkPlayback } from '../eval/playback/LandmarkPlayback'
 import type { DimensionScore, SessionData } from '../types'
 import { Steps, TopNav } from './Chrome'
@@ -37,6 +39,8 @@ export function Report({ session, localRecording, onNew }: Props) {
   const report = session.report
   const video = useRef<HTMLVideoElement>(null)
   const [playhead, setPlayhead] = useState(0)
+  const eventsBox = useRef<HTMLDivElement>(null)
+  const userScrolledAt = useRef(0)
   const [playing, setPlaying] = useState(false)
   const [muted, setMuted] = useState(false)
   // Face and body tracking drawn over the recording (evaluation workstream). Only in playback, never live.
@@ -103,13 +107,27 @@ export function Report({ session, localRecording, onNew }: Props) {
   const markers = [
     ...slideTimes.map((t, i) => ({ t, kind: 'slide', label: `Slide ${session.slideChanges[i + 1]?.slide + 1}` })),
     ...session.qna.map((q, i) => ({ t: q.start, kind: 'question', label: `Question ${i + 1} · ${q.personaName}` })),
-    ...session.events.filter((e) => e.type === 'filler_burst').map((e) => ({ t: e.t - 4, kind: 'filler', label: 'Filler burst' })),
+    // Evaluation feedback markers (coloured by severity); the legacy filler markers only for older sessions.
+    ...(ev
+      ? ev.events.map((e) => ({ t: e.t, kind: `fb ${e.severity}`, label: e.msg }))
+      : session.events.filter((e) => e.type === 'filler_burst').map((e) => ({ t: e.t - 4, kind: 'filler', label: 'Filler burst' }))),
     ...(report.bestMoment ? [{ t: report.bestMoment.start, kind: 'best', label: 'Best moment' }] : []),
   ].sort((a, b) => a.t - b.t)
 
-  const eventList = session.events
-    .filter((e) => !['tool_called', 'answer_given', 'eye_contact_regained'].includes(e.type))
-    .slice(0, 80)
+  // Evaluation feedback (rules + Claude) and session milestones, in time order.
+  const eventList = eventItems(session)
+  // The event the recording is at: the latest one at or before the playhead. It is highlighted, the rest dimmed,
+  // and the list scrolls itself (not the page) to keep it in view, unless the user scrolled the list recently.
+  let currentEvent = -1
+  for (let i = 0; i < eventList.length && eventList[i].t <= playhead + 0.25; i++) currentEvent = i
+
+  useEffect(() => {
+    const box = eventsBox.current
+    const el = box?.querySelector<HTMLElement>('button.current')
+    if (!box || !el || Date.now() - userScrolledAt.current < 3000) return
+    const top = el.offsetTop - 8 // .rp-events is position: relative, so offsetTop is relative to the list
+    if (top < box.scrollTop || top + el.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTo({ top, behavior: 'smooth' })
+  }, [currentEvent])
 
   const dash = '—'
   const subScores = ev
@@ -247,6 +265,7 @@ export function Report({ session, localRecording, onNew }: Props) {
                       onTimeUpdate={(e) => setPlayhead(e.currentTarget.currentTime)}
                     />
                     {ev?.landmarks && <LandmarkPlayback video={video} track={ev.landmarks} samples={ev.samples} layers={tracking} />}
+                    {ev && <LiveNotes events={ev.events} t={playhead} />}
                     {!playing && (
                       <button className="rp-btn rp-play" onClick={togglePlay}>
                         Play recording
@@ -301,7 +320,15 @@ export function Report({ session, localRecording, onNew }: Props) {
               <div className="rp-legend">
                 <span><i style={{ background: 'var(--rp-text-2)' }} /> Slide change</span>
                 <span><i style={{ background: 'var(--rp-blue)' }} /> Question</span>
-                <span><i style={{ background: 'var(--rp-yellow)' }} /> Filler burst</span>
+                {ev ? (
+                  <>
+                    <span><i style={{ background: 'var(--rp-red)' }} /> Problem</span>
+                    <span><i style={{ background: 'var(--rp-yellow)' }} /> Warning</span>
+                    <span><i style={{ background: 'var(--rp-green-text)' }} /> Good moment</span>
+                  </>
+                ) : (
+                  <span><i style={{ background: 'var(--rp-yellow)' }} /> Filler burst</span>
+                )}
                 <span><i style={{ background: 'var(--rp-green)' }} /> Best moment</span>
               </div>
               {recording && ev?.landmarks && (
@@ -318,27 +345,31 @@ export function Report({ session, localRecording, onNew }: Props) {
               )}
             </div>
             <div>
+              {ev && <ScoresAt ev={ev} t={playhead} />}
               <span className="rp-eyebrow blue">Session events</span>
-              <div className="rp-events" aria-label="Session events">
+              <div
+                className={`rp-events ${currentEvent >= 0 ? 'following' : ''}`}
+                aria-label="Session events"
+                ref={eventsBox}
+                onWheel={() => (userScrolledAt.current = Date.now())}
+                onTouchMove={() => (userScrolledAt.current = Date.now())}
+              >
                 {eventList.length ? (
-                  eventList.map((e, i) => {
-                    const isQuestion = e.type === 'question_asked'
-                    // Question events carry "Persona: question text".
-                    const cut = isQuestion && e.detail ? e.detail.indexOf(': ') : -1
-                    const who = cut > 0 ? e.detail!.slice(0, cut) : null
-                    const body = cut > 0 ? e.detail!.slice(cut + 2) : null
-                    const detail = who ?? e.detail
-                    return (
-                      <button key={i} className={isQuestion ? 'question' : undefined} onClick={() => seek(e.t)}>
-                        <span className="t">{formatTime(e.t)}</span>
-                        <span className="what">
-                          {e.type.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())}
-                          {detail && ` · ${detail}`}
-                        </span>
-                        {body && <span className="body">{body}</span>}
-                      </button>
-                    )
-                  })
+                  eventList.map((e, i) => (
+                    <button
+                      key={i}
+                      className={[e.tone === 'question' ? 'question' : e.tone !== 'neutral' ? `fb ${e.tone}` : '', i === currentEvent ? 'current' : ''].join(' ').trim() || undefined}
+                      aria-current={i === currentEvent ? 'true' : undefined}
+                      onClick={() => seek(e.t)}
+                    >
+                      <span className="t">{formatTime(e.t)}</span>
+                      <span className="what">
+                        {e.title}
+                        {e.tag && <span className="tag">{e.tag}</span>}
+                      </span>
+                      {e.body && <span className="body">{e.body}</span>}
+                    </button>
+                  ))
                 ) : (
                   <p className="rp-muted">No notable events were detected.</p>
                 )}
@@ -356,6 +387,9 @@ export function Report({ session, localRecording, onNew }: Props) {
           playhead={playhead}
           onSeek={seek}
         />
+
+        {/* "See yourself do it better" (evaluation workstream: Claude + ElevenLabs voice clone + fal lip sync) */}
+        <DoItBetter session={session} report={report} src={recording} seek={(t) => seek(t)} />
 
         {/* 5. Content feedback and Q&A */}
         {report.content && (

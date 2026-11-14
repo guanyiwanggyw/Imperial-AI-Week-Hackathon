@@ -25,6 +25,8 @@ export interface AvatarDriver {
   say(text: string, signal?: AbortSignal, onProgress?: (spoken: string) => void): Promise<SayResult>
   interrupt(): void
   stop(): Promise<void>
+  /** Silent context for the avatar's session (Anam addContext). Optional: only live Anam sessions support it. */
+  addContext?(text: string): void
 }
 
 /** Rough upper bound on how long a line takes to say, so a lost end event never hangs a turn. */
@@ -33,6 +35,15 @@ const maxSpeechMs = (text: string) => 6000 + text.split(/\s+/).length * 600
 let videoCount = 0
 
 export class AnamDriver implements AvatarDriver {
+  /** Injects silent context into the live Anam session (e.g. delivery notes from the evaluation). Never throws. */
+  addContext(text: string) {
+    try {
+      this.client?.addContext(text)
+    } catch {
+      // not streaming yet, or the session closed
+    }
+  }
+
   readonly provider = 'anam'
   private client: AnamClient | null = null
   private video: HTMLVideoElement | null = null

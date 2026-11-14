@@ -107,6 +107,8 @@ export type SampleX = Sample & {
   handsHidden?: boolean
   /** Eyebrow raise (browInnerUp/OuterUp average), 0–1, for facial expressiveness. */
   brow?: number | null
+  /** Hand shape in this frame: thumbs_up, thumbs_down, point, open_palm, fist (see gestures.ts). */
+  gesture?: string | null
 }
 
 /** Body language broken into the parts of the Tübingen presentation rubric and coaches' criteria. Each 0–100 or null. */

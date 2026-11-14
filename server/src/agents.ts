@@ -59,7 +59,7 @@ interface AgentIn {
 }
 
 agentsRouter.post("/drafts", async (req, res) => {
-  const { personas, transcript, conversation, latest, context } = req.body as {
+  const { personas, transcript, conversation, latest, context, delivery } = req.body as {
     personas: AgentIn[];
     /** Recent speaker transcript, timestamped */
     transcript: string;
@@ -67,6 +67,7 @@ agentsRouter.post("/drafts", async (req, res) => {
     conversation: { who: string; text: string }[];
     /** What the speaker said since the last panel line: every line should respond to this. */
     latest?: string;
+    delivery?: string[];
     context?: string;
   };
   if (!Array.isArray(personas) || !personas.length) return res.status(400).json({ error: "personas are required" });
@@ -76,6 +77,7 @@ agentsRouter.post("/drafts", async (req, res) => {
     "For every panelist, draft the next line they would say in each situation (question, follow_up, comment, interjection, reply).",
     "Stay in character: personality, focus areas and strictness (1 = easy to impress, 5 = very hard).",
     "Respond to what the speaker actually said, especially their latest words: quote or paraphrase them, react before you ask, and never ask something they just answered. Never invent facts about their business.",
+    "speaker_delivery lists what the panel can see and hear right now (looking away, fidgeting, rambling, a flat voice). A strict or impatient panelist may occasionally react to it in character (\"You keep looking down at your notes.\"), but at most one line in the panel's drafts, and only if it is natural.",
     "Sound like real people talking, not interviewers reading a list: contractions, plain words, an occasional short reaction (\"Okay.\", \"Hm, right.\", \"Oh, interesting.\"), no corporate filler and no \"Great question\".",
     "Panelists are aware of each other: never repeat what another panelist asked, and sometimes build on one by name (\"Building on Priya's point, ...\").",
     "If the speaker asked a question or addressed a panelist by name, that panelist's reply must answer it directly and in character.",
@@ -87,6 +89,7 @@ agentsRouter.post("/drafts", async (req, res) => {
     `<latest_from_speaker>\n${latest?.trim() || "(nothing new since the last panel line)"}\n</latest_from_speaker>`,
     `<transcript>\n${(transcript || "(the speaker has said very little so far)").slice(-6000)}\n</transcript>`,
     context ? `<context>\n${context.slice(0, 3000)}\n</context>` : "",
+    delivery?.length ? `<speaker_delivery>\n${delivery.slice(0, 6).join("\n")}\n</speaker_delivery>` : "",
     `Return one entry per panelist, using these persona_id values: ${personas.map((p) => p.id).join(", ")}.`,
   ].join("\n\n");
 

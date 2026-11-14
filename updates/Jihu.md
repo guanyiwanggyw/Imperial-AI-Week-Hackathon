@@ -7,6 +7,100 @@
 
 ## Log
 
+### 2026-11-14: stricter Pauses, Eye contact and Gestures
+
+- **Report order (`Report.tsx`):** "Delivery over time" now sits above "See yourself do it better".
+- **Fixed a CSS break I caused** in `index.css`: removing the redo styles left an unclosed `@media (max-width: 720px) {` that swallowed every report rule after it on desktop. That line is back to the committed `.rp-legend` rule.
+
+- **The do-it-better clip returned audio only** because `FAL_KEY` was missing from `.env`, so the lip-sync step was skipped. The voice clone worked and was deleted afterwards. The feature stays: add `FAL_KEY` and restart the server.
+- **Pauses (`evaluate.ts`):**
+  - Filled pauses ("um", "uh", "er") now count as hesitations alongside silent mid-sentence ones: minus 10 per hesitation per minute, up to 70.
+  - Long stalls (over 3s): minus 8 each.
+  - Deliberate pauses must land 2–8 a minute: under 1 a minute minus 30, under 2 minus 12, over 10 (choppy) minus 15.
+  - Full marks only with no hesitations and deliberate pauses in that range (otherwise capped at 90).
+- **Eye contact (`scores.ts`, `thresholds.ts`):**
+  - On target narrowed to ±10° left/right and ±12° up/down (was 12°/14°).
+  - Score = 20 + (share − 0.5)/0.45 × 80: 50% scores 20, 95% scores 100 (was 30% to 20, 90% to 100).
+  - Longest look-away beyond 2s costs 5/s, up to 25 (was beyond 3s). Darting glances over 10 a minute cost 10. Each look-away event costs 4, up to 25 (was 2, up to 20).
+- **Gestures (`scores.ts` `bodyBreakdown`):**
+  - Ideal band is 35–65% of speaking time (was 30–70%), with a steeper curve outside it.
+  - Frantic movement costs ×150, up to 40.
+  - The same repeated motion (hand-speed variation under 0.35) costs 10. No open palms or pointing costs 10.
+  - Hands visible less than half the time while talking caps it at 80.
+- **Re-score of session `20261114231615-a5wo`:** Pauses 100 → 30 (6 um/uh in about 30s), Eye contact 98 → 85, Gestures 100 → 80. The fake pitch's eye and gestures drop the same way, and the silent gate is unchanged.
+
+### 2026-11-14: voice isolator, Anam addContext, gesture vs words, "see yourself do it better"
+
+**Heads-up, Guanyi / Person 2:** small edits in your `drivers.ts`, `panelAvatars.ts`, `orchestrator.ts`, `server/src/agents.ts` and `Session.tsx`, listed below. **Derek / Person 3:** a new section in `Report.tsx` plus CSS.
+
+- **Feedback source hidden:** report tags and on-video notes show only the topic (Eye contact, Body language, …), not "Claude".
+- **ElevenLabs Voice Isolator (`server/src/eval/audio.ts`, `POST /api/eval/transcribe`):**
+  - After the session, the audio goes through Audio Isolation (room noise and background chatter removed), then Scribe v2 with `diarize: true`.
+  - `evaluate.ts` `ownSpeakerWords()` keeps the speaker whose words line up with the user's mouth movement. Panel voices and other people have other speaker ids.
+  - `session.words` now holds only the speaker's own words (`liveWords` keeps everything), so every report chart uses them.
+  - The isolated voice is saved as `voice.mp3` for the voice clone. If isolation fails, the raw audio is transcribed.
+  - `Session.tsx` calls this route instead of `/api/voice/transcribe` (one call changed; timeout 280s). `Word` gets an optional `speaker`.
+  - My server routes are combined in `server/src/eval/routes.ts`, and `index.ts` imports from there.
+- **Anam `addContext()` + delivery-aware agents:**
+  - Anam's own LLM is off in our setup (`CUSTOMER_CLIENT_V1`), so `addContext` alone changes nothing visible. It's wired both ways:
+    - `AnamDriver.addContext()` and `PanelAvatars.addContext()`. `Session.tsx` sends each new delivery warning to every live avatar ("[What the panel can see right now] Arms crossed for 5.2s"), at most once per kind every 30s.
+    - `EvalSession.deliveryNotes()` (recent eye, body, voice and timing warnings, plus rambling and gaze from RoomState) goes to the orchestrator as `delivery`. `server/src/agents.ts` adds a `<speaker_delivery>` block, and a strict panelist may occasionally react in character ("You keep looking down at your notes"), at most one line.
+- **Gesture vs words (`web/src/eval/gestures.ts`):**
+  - Hand shapes come from the 21 hand landmarks, independent of rotation: thumbs up or down, pointing, open palm, fist. New `SampleX.gesture`.
+  - After the session, each thumbs up or down held 0.4s+ is checked against the sentiment of the words within ±2.5s (pitch lexicon with negation). A contradiction gives a body warning ("Thumbs-up while describing something negative (…). Mixed message."); a match gives a good event. Warnings count towards the body score.
+  - Claude also gets the gesture timeline (segments and final) and is asked to flag contradictions the lexicon misses.
+- **"See yourself do it better" (`server/src/eval/redo.ts` `POST /api/eval/redo` SSE + `GET /api/eval/redo/:id`; `web/src/eval/playback/DoItBetter.tsx`):** the report picks the weakest passage of the speaker's own words (around Claude's top priority, else the worst voice, clarity or timing warning). Then:
+  1. Claude rewrites it.
+  2. With a consent checkbox, ElevenLabs instant voice cloning runs on `voice.mp3`, and the clone is deleted straight after. Otherwise a stock voice is used.
+  3. Eleven v3 speaks the improved passage.
+  4. fal `minimax/h3-max/lip-sync/image-to-video` (480P, about $0.05/s) lip-syncs it onto a frame of the recording where the face looks at the panel.
+  - Results are saved as `redo-n.mp4/.mp3/redo.json` and reload with the report. The audio is shown if lip sync fails.
+  - New env var `EVAL_LIPSYNC_MODEL`.
+- **Verified:**
+  - Gesture classifier unit test (all five shapes) and congruence test (contradiction, match, negation).
+  - Route validation and error paths.
+  - The report renders the redo section on a test copy of a session with the right passage, and an explanation card on a session with too little speech.
+  - Topic-only tags. Web, server and CLI typecheck, the build passes, and the silent gate is unchanged.
+- **Not run yet:** a real end-to-end redo, transcribe or addContext call. Those send the user's voice and face to ElevenLabs and fal and spend credits, so they should be triggered by the user.
+
+### 2026-11-14: the report shows the evaluation (brief §3 feedback player)
+
+**Heads-up, Derek / Person 3: wiring in your `Report.tsx` and `index.css`. The logic lives in my `web/src/eval/playback/FeedbackPanels.tsx`.**
+
+- **Session events list:** now the evaluation's feedback events (rule and Claude, left border coloured by severity, with a category or "Claude · …" tag) plus milestones (questions, slide changes, pitch end), in time order. Older sessions without an evaluation keep the legacy list. Follow-along highlighting still works.
+- **Live notes on the video:** feedback active at the playhead (a ranged event, or 3s for a point event) is shown over the recording, worst first, at most two. It's in playback only, as the brief says.
+- **"Scores at this moment":** eye, body, voice and clarity bars from `scoreSeries[floor(t)]` that move while playing or scrubbing, with the final score marked on each track. Hidden when unmeasured or when there wasn't enough speech.
+- **Timeline markers:** feedback markers coloured by severity (problem, warning, good) replace the legacy filler markers when an evaluation exists, and the legend updates to match.
+- **The clarity series now uses the same blend as the final score:** Claude's segment or overall coherency, blended with the filler check, or unmeasured without Claude. Before, the bar read 100 (fillers only) while the final was 8.
+- **Claude note text** is cleaned of stray brackets and quotes, on the server (`judge.ts`) and when displaying older sessions.
+- **Verified in headless Chrome on a real session (`20261114215333-kli4`):**
+  - 12 feedback items and 12 markers.
+  - The notes at 0:01 show the rule event and the Claude note.
+  - The bars move with seeking (eye 100 → 73 → 100).
+  - Screenshot checked. No errors.
+
+### 2026-11-14: report events follow the recording; random panel lineups (UI and personas, requested by me)
+
+**Heads-up, Derek / Person 3 and Guanyi / Person 2: these touch your files. Please review.**
+
+- **Session events follow the recording (`Report.tsx`, `index.css`):**
+  - The event the recording is at (the latest at or before the playhead) is highlighted, and the others are dimmed to 45%.
+  - The list scrolls itself, not the page, to keep the current event in view. Auto-scroll pauses for 3s after you scroll the list by hand.
+  - Before the first event, nothing is dimmed. Events are now sorted by time.
+  - Changes: an effect plus refs in `Report.tsx`; `.rp-events` gets `position: relative` and `.following` / `.current` rules.
+- **Random panel lineups (`personas.ts`, `types.ts`, `Setup.tsx`):**
+  - Each built-in panel type has a pool: investors 10, peers 9, interview 10 (the original members plus 7 new personas each). A lineup of the original size (3 / 2 / 3) is drawn every time setup opens.
+  - `drawPanel()` always includes a strict member (4+) when the pool has one, and seats the strictest first, since the first persona leads.
+  - New "Shuffle panel" button on "Meet your panel".
+  - New investors: Daniel Osei, Hannah Brooks, Ravi Menon, Catherine Dubois, Jonah Feld, Mei Tanaka, Tunde Adeyemi.
+  - New peers: Leo Martins, Zara Ahmed, Kenji Watanabe, Priyanka Rao, Ben Carter, Amara Nwosu, Felix Schmidt.
+  - New interviewers: Grace Liu, Omar Haddad, Sofia Rossi, David Kim, Nadia Petrova, Marcos Silva, Eleanor Wright.
+  - New personas have no `anamAvatarId`, so the server matches a realistic Anam face by gender and look, as for custom agents. fal and Synthesia portraits show initials until generated.
+  - `Panel` gets optional `pool` and `size`. Setup's Synthesia sync covers the whole pool.
+- **Verified:**
+  - 2,000 draws per panel: no invalid lineups, and members appear evenly.
+  - Headless Chrome: Shuffle changes the lineup with the strictest first. On a real recording, seeking highlights the right event, scrolls it into view and dims the rest. No errors.
+
 ### 2026-11-14: fix: Pace 100 and Tonality 100 after barely speaking (interactive session)
 
 - **What happened in session `20261114200812-48vb`:**

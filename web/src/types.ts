@@ -41,7 +41,11 @@ export interface Panel {
   description: string
   setting: string
   backdropPrompt: string
+  /** The lineup for this session (drawn from `pool` when there is one). */
   personas: Persona[]
+  /** Everyone who can sit on this kind of panel. A lineup of `size` is drawn from it for each session. */
+  pool?: Persona[]
+  size?: number
 }
 
 export interface Slide {
@@ -69,6 +73,8 @@ export interface Word {
   text: string
   start: number
   end: number
+  /** Speaker id from diarization (accurate transcript only). */
+  speaker?: string
 }
 
 export type EventType =

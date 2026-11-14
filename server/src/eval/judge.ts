@@ -21,7 +21,7 @@ export const evalRouter = Router();
 const SEGMENT_MODEL = process.env.EVAL_SEGMENT_MODEL?.trim() || "claude-haiku-5-5";
 const FINAL_MODEL = process.env.EVAL_FINAL_MODEL?.trim() || "claude-sonnet-5-5";
 
-function client() {
+export function anthropicClient() {
   if (!env.anthropicKey) throw new Error("Anthropic is not configured");
   // Keys that are not scoped to a workspace must name one with this header (ANTHROPIC_WORKSPACE_ID in .env).
   const workspace = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
@@ -75,7 +75,8 @@ const cleanNote = (n: z.infer<typeof Note>, lo: number, hi: number) => ({
   ...(n.end !== null ? { end: clamp(n.end, lo, hi) } : {}),
   cat: n.cat,
   severity: n.severity,
-  msg: n.msg,
+  // Models occasionally leave a stray bracket or quote at the end of a string.
+  msg: n.msg.replace(/^[\s"'`\[\]{}]+|[\s"'`\[\]{}]+$/g, ""),
 });
 
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, Number.isFinite(n) ? n : lo));
@@ -100,9 +101,10 @@ evalRouter.post("/segment", async (req, res) => {
     `<measured_signals>\n${JSON.stringify(input.signals)}\n</measured_signals>`,
     `<rule_events>\n${input.ruleEvents?.join("\n") || "(none)"}\n</rule_events>`,
     "Return notes only for times inside this chunk.",
+    "If measured_signals lists gestures, check each against what the speaker was saying at that time. Flag a gesture that contradicts the words (for example a thumbs-up while describing a problem) as a body note.",
   ].join("\n\n");
   try {
-    const response = await client().beta.messages.parse(
+    const response = await anthropicClient().beta.messages.parse(
       {
         model: SEGMENT_MODEL,
         max_tokens: 4000,
@@ -184,10 +186,11 @@ evalRouter.post("/final", async (req, res) => {
     `<rule_events>\n${input.ruleEvents?.join("\n") || "(none)"}\n</rule_events>`,
     input.bestMoment ? `<best_moment_candidate start="${input.bestMoment.start}" end="${input.bestMoment.end}">\n${input.bestMoment.text}\n</best_moment_candidate>` : "",
     "Merge the segment notes into the final judgement. If there was no Q&A, score qna and composure from what little evidence exists and say so.",
+    "measured_scores_and_stats.gestures lists hand gestures with times: if one contradicts what was being said at that moment (for example a thumbs-up while describing a problem), include it as a body key moment.",
   ].join("\n\n");
 
   try {
-    const stream = client().beta.messages.stream(
+    const stream = anthropicClient().beta.messages.stream(
       {
         model: FINAL_MODEL,
         max_tokens: 16000,

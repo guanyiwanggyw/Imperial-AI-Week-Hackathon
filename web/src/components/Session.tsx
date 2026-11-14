@@ -64,7 +64,22 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const rerender = useCallback(() => force((n) => n + 1), [])
   // Evaluation engine: camera/mic analysis, live transcript, RoomState, rule events, background judge.
   const evalRef = useRef<EvalSession | null>(null)
-  evalRef.current ??= new EvalSession({ stream, onUpdate: rerender, context: () => config.context, judge: status.anthropic })
+  // Delivery notes (looked away, arms crossed, fidgeting…) go to the live avatars as silent context (Anam addContext),
+  // at most once per kind of note every 30 s.
+  const contextSentAt = useRef<Record<string, number>>({})
+  evalRef.current ??= new EvalSession({
+    stream,
+    onUpdate: rerender,
+    context: () => config.context,
+    judge: status.anthropic,
+    onFeedback: (e) => {
+      if (e.severity === 'good' || !['eye', 'body', 'tone', 'timing'].includes(e.cat)) return
+      const kind = `${e.cat}:${e.msg.split(' ').slice(0, 2).join(' ')}`
+      if (e.t - (contextSentAt.current[kind] ?? -Infinity) < 30) return
+      contextSentAt.current[kind] = e.t
+      avatars.addContext(`[What the panel can see right now] ${e.msg}`)
+    },
+  })
   const evalRt = evalRef.current
   const transcript = evalRt.transcript
   const selfView = useRef<HTMLVideoElement>(null)
@@ -191,6 +206,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
           room: () => evalRt.roomState,
           phrases: () => transcript.phrases,
           samples: () => evalRt.sampler.samples,
+          delivery: () => evalRt.deliveryNotes(),
           say: sayLogged,
           onExchange: () => evalRt.exchangeEnded(),
           onDecision: (d) => console.info(`[agents] ${d.personaId} ${d.kind} (${d.reason}): ${d.text}`),
@@ -430,11 +446,13 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
     }
 
     if (files && status.elevenlabs) {
-      setFinishStep('Transcribing precisely')
+      setFinishStep('Cleaning the audio and transcribing precisely')
       try {
+        // Evaluation route: ElevenLabs voice isolation, then Scribe with speaker labels (keeps only your words later).
         const form = new FormData()
         form.append('audio', files.audio, 'audio.webm')
-        const { words } = await postForm<{ words: Word[] }>('/api/voice/transcribe', form, 130000)
+        form.append('sessionId', id)
+        const { words } = await postForm<{ words: Word[] }>('/api/eval/transcribe', form, 280000)
         if (words.length >= transcript.words.length * 0.5) session.words = words
       } catch (err) {
         console.warn('Batch transcription failed, using the live transcript:', err)
@@ -446,6 +464,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
     const built = await buildReport(session, evalRt.capture(), { skipJudge: !status.anthropic })
     session.report = built.report
     session.evaluation = built.evaluation
+    // Report charts read session.words: keep only the speaker's own words (panel lines and other voices removed).
+    session.words = built.ownWords
     try {
       await fetch(`/api/sessions/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(session) })
     } catch {

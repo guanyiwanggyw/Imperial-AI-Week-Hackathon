@@ -115,6 +115,23 @@ export class EvalSession {
     )
   }
 
+  /**
+   * Short notes on the speaker's delivery right now, from the last 45 s of live rule events and the room state
+   * ("Looked away for 4.2s", "Arms crossed", "Rambling"). Sent to the live avatars (Anam addContext) and to the
+   * agents' line drafts, so the panel can react to body language and delivery, not just words.
+   */
+  deliveryNotes(windowSec = 45): string[] {
+    const t = this.now()
+    const notes = this.rules.events
+      .filter((e) => e.severity !== 'good' && (e.end ?? e.t) >= t - windowSec && ['eye', 'body', 'tone', 'timing'].includes(e.cat))
+      .slice(-4)
+      .map((e) => e.msg)
+    const r = this.roomState
+    if (r && r.ramblingScore > 0.6) notes.push('The speaker is rambling: a long, repetitive stretch without a clear point.')
+    if (r && r.gazeAwaySec > 3) notes.push(`The speaker has been looking away from the panel for ${Math.round(r.gazeAwaySec)}s.`)
+    return [...new Set(notes)]
+  }
+
   /** Last time (session seconds) the mic heard the speaker. */
   lastVoiceT(): number {
     const s = this.sampler.samples

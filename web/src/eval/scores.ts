@@ -40,13 +40,30 @@ function episodes(samples: SampleX[], pred: (s: SampleX) => boolean, gapSec = 3)
 
 // ---------- per-category scores over a set of samples / phrases ----------
 
-/** Eye contact: share of on-target frames among frames with a face, minus long look-aways. */
+/**
+ * Eye contact (strict): share of on-target frames among frames with a face (50% scores 20, 95% scores 100), minus
+ * the longest look-away beyond 2 s (5 per second, up to 25) and darting glances (more than 10 a minute).
+ */
 export function eyeScore(samples: SampleX[]): number | null {
   const withFace = samples.filter((s) => s.face)
   if (withFace.length < 5 || withFace.length < samples.length * 0.3) return null
   const share = withFace.filter((s) => s.gazeOnTarget).length / withFace.length
   const lookAway = longestRun(samples, (s) => !s.gazeOnTarget)
-  return Math.round(clamp(20 + ((share - 0.3) / 0.6) * 80 - (lookAway > T.rules.lookAwaySec ? Math.min(20, (lookAway - T.rules.lookAwaySec) * 4) : 0)))
+  const minutes = Math.max((withFace[withFace.length - 1].t - withFace[0].t) / 60, 1 / 6)
+  // A glance = gaze leaving the target for at least ~0.3 s.
+  let glances = 0
+  let offFrom: number | null = null
+  for (const s of withFace) {
+    if (!s.gazeOnTarget) offFrom ??= s.t
+    else {
+      if (offFrom !== null && s.t - offFrom >= 0.3) glances++
+      offFrom = null
+    }
+  }
+  let score = 20 + ((share - 0.5) / 0.45) * 80
+  score -= lookAway > 2 ? Math.min(25, (lookAway - 2) * 5) : 0
+  score -= glances / minutes > 10 ? 10 : 0
+  return Math.round(clamp(score))
 }
 
 const share = (xs: SampleX[], pred: (s: SampleX) => boolean) => (xs.length ? xs.filter(pred).length / xs.length : 0)
@@ -79,15 +96,22 @@ export function bodyBreakdown(samples: SampleX[]): BodyBreakdown {
     openness = 40 + 60 * lerp(share(posed, (s) => s.armsOpen), 0.5, 0.8) - 60 * share(posed, (s) => Boolean(s.handsHidden))
   }
 
-  // Gestures while speaking: some of the time, in the natural speed band, not frantic.
+  // Gestures while speaking (strict): in the natural speed band 35–65% of the time, not frantic, not one repeated
+  // motion, some illustrative shapes (open palms, pointing), and hands in view while talking.
   let gestures: number | null = null
   const handsSeen = speaking.filter((s) => s.handsVisible > 0 || s.armSpan != null)
   if (speaking.length >= 5 * T.sampleHz && handsSeen.length >= speaking.length * 0.2) {
-    const active = share(handsSeen, (s) => s.handSpeed >= B.handSpeedStill && s.handSpeed <= B.handSpeedBusy)
+    const activeSamples = handsSeen.filter((s) => s.handSpeed >= B.handSpeedStill && s.handSpeed <= B.handSpeedBusy)
+    const active = activeSamples.length / handsSeen.length
     const frantic = share(handsSeen, (s) => s.handSpeed > B.handSpeedBusy)
     const [lo, hi] = B.gestureShareGood
-    const base = active < lo ? 40 + 60 * (active / lo) : active > hi ? 100 - ((active - hi) / (1 - hi)) * 30 : 100
-    gestures = base - Math.min(30, frantic * 100)
+    let g = active < 0.15 ? 25 + (active / 0.15) * 25 : active < lo ? 50 + ((active - 0.15) / (lo - 0.15)) * 40 : active > hi ? 100 - ((active - hi) / (1 - hi)) * 40 : 100
+    g -= Math.min(40, frantic * 150)
+    const speeds = activeSamples.map((s) => s.handSpeed)
+    if (speeds.length >= 10 && std(speeds) / Math.max(mean(speeds), 1e-3) < 0.35) g -= 10 // one repeated motion
+    if (share(handsSeen, (s) => s.gesture === 'open_palm' || s.gesture === 'point') < 0.03) g -= 10 // no illustrative shapes
+    if (handsSeen.length < speaking.length * 0.5) g = Math.min(g, 80) // hands mostly out of view while talking
+    gestures = g
   }
 
   // Self-touch and fidgeting: face touches per minute, hands wringing or clasped while moving.
@@ -175,7 +199,14 @@ function fill(xs: (number | null)[]): number[] {
 }
 
 /** Rolling score per second. Index i covers the 10 s ending at i (coherency uses 30 s to stay stable). */
-export function buildScoreSeries(samples: SampleX[], phrases: Phrase[], duration: number, segments: SegmentNote[] = []): Record<ScoreCat, number[]> {
+export function buildScoreSeries(
+  samples: SampleX[],
+  phrases: Phrase[],
+  duration: number,
+  segments: SegmentNote[] = [],
+  /** Claude's overall coherency, used where no segment note covers the moment. */
+  claudeCoherency: number | null = null,
+): Record<ScoreCat, number[]> {
   const n = Math.max(1, Math.ceil(duration))
   const raw: Record<ScoreCat, (number | null)[]> = { eye: [], body: [], tone: [], coherency: [] }
   let lo = 0
@@ -188,9 +219,11 @@ export function buildScoreSeries(samples: SampleX[], phrases: Phrase[], duration
     raw.eye.push(eyeScore(win))
     raw.body.push(bodyScore(win))
     raw.tone.push(toneScore(win, phrases, from, i))
+    // Same blend as the final score: Claude's judgement (for this stretch, else overall) plus the filler check.
+    // Without any Claude judgement, coherency is unmeasured (fillers alone cannot judge it).
     const proxy = coherencyProxy(phrases, i - 30, i)
-    const seg = segments.find((s) => s.coherency !== null && i >= s.from && i <= s.to)
-    raw.coherency.push(proxy === null ? (seg?.coherency ?? null) : seg?.coherency != null ? Math.round(0.5 * proxy + 0.5 * seg.coherency) : proxy)
+    const claude = segments.find((s) => s.coherency !== null && i >= s.from && i <= s.to)?.coherency ?? claudeCoherency
+    raw.coherency.push(claude == null ? null : proxy === null ? claude : Math.round(T.claudeCoherencyShare * claude + (1 - T.claudeCoherencyShare) * proxy))
   }
   return { eye: fill(raw.eye), body: fill(raw.body), tone: fill(raw.tone), coherency: fill(raw.coherency) }
 }
@@ -222,7 +255,7 @@ export function computeFinalScores(i: FinalScoreInput): { scores: Record<ScoreCa
   const addressed = (t: number) => i.agentTurns.some((a) => t >= a.t && t <= a.end + 2)
   const engaged = i.samples.filter((s) => s.speaking || addressed(s.t))
   const eyeBase = eyeScore(engaged.length >= 5 * 7 ? engaged : i.samples)
-  const eye = eyeBase === null ? null : clamp(eyeBase - Math.min(20, i.lookAwayEvents * 2))
+  const eye = eyeBase === null ? null : clamp(eyeBase - Math.min(25, i.lookAwayEvents * 4))
   const bodyBase = bodyScore(i.samples)
   // Short problems average away over a long session; each warning still costs a little, like look-aways do for eye.
   const body = bodyBase === null ? null : clamp(bodyBase - Math.min(20, (i.bodyEvents ?? 0) * 3))
