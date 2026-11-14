@@ -1,5 +1,7 @@
 import { useMemo, useRef, useState } from 'react'
+import type { Layers } from '../eval/debug/draw'
 import { expressiveness, eyeContactShare, fillerIndices, findPauses, formatTime, wpmBetween, windows } from '../eval/metrics'
+import { LandmarkPlayback } from '../eval/playback/LandmarkPlayback'
 import type { DimensionScore, SessionData } from '../types'
 import { Sparkline } from './Sparkline'
 
@@ -35,6 +37,8 @@ export function Report({ session, localRecording, onNew }: Props) {
   const report = session.report
   const video = useRef<HTMLVideoElement>(null)
   const [playhead, setPlayhead] = useState(0)
+  // Face and body tracking drawn over the recording (evaluation workstream). Only in playback, never live.
+  const [tracking, setTracking] = useState<Layers>({ face: true, hands: true, pose: true })
   const duration = Math.max(session.duration, 1)
   const slideTimes = session.slideChanges.filter((s) => s.t > 0).map((s) => s.t)
   const pitchWords = session.words.filter((w) => w.start < session.pitchEnd)
@@ -204,7 +208,10 @@ export function Report({ session, localRecording, onNew }: Props) {
         <div className="player">
           <div>
             {recording ? (
-              <video ref={video} src={recording} controls playsInline onTimeUpdate={(e) => setPlayhead(e.currentTarget.currentTime)} />
+              <div style={{ position: 'relative' }}>
+                <video ref={video} src={recording} controls playsInline style={{ display: 'block' }} onTimeUpdate={(e) => setPlayhead(e.currentTarget.currentTime)} />
+                {ev?.landmarks && <LandmarkPlayback video={video} track={ev.landmarks} samples={ev.samples} layers={tracking} />}
+              </div>
             ) : (
               <div className="notice">The recording could not be saved.</div>
             )}
@@ -228,6 +235,18 @@ export function Report({ session, localRecording, onNew }: Props) {
               <span><i style={{ background: 'var(--warn)' }} /> Filler burst</span>
               <span><i style={{ background: 'var(--good)' }} /> Best moment</span>
             </div>
+            {recording && ev?.landmarks && (
+              <div className="row" style={{ gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+                <span className="faint">Tracking overlay</span>
+                {(['face', 'hands', 'pose'] as const).map((k) => (
+                  <label key={k} className="chip" style={{ cursor: 'pointer' }}>
+                    <input type="checkbox" checked={tracking[k]} onChange={(e) => setTracking({ ...tracking, [k]: e.target.checked })} />
+                    {k === 'pose' ? 'Body' : k === 'face' ? 'Face' : 'Hands'}
+                  </label>
+                ))}
+                <span className="faint">Face green = eye contact, red = looking away · hands amber = touching face · forearms red = arms crossed</span>
+              </div>
+            )}
           </div>
           <div className="event-list" aria-label="Session events">
             {eventList.length ? (

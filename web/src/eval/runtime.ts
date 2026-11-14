@@ -184,6 +184,7 @@ export class EvalSession {
       ruleEvents: this.rules.events,
       segments: this.judge.segments,
       calibration: this.calibration,
+      landmarks: this.sampler.landmarks,
     }
   }
 
