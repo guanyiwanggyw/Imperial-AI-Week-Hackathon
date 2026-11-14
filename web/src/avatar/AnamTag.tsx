@@ -1,30 +1,18 @@
-import { useState } from 'react'
 import type { AnamMatch } from './anamMatch'
 
-/** One agent's Anam avatar: thumbnail, name and id. Click to copy the id. */
+/**
+ * One agent's Anam avatar: thumbnail and name. Ids are deliberately not shown in the UI; they live
+ * in web/src/personas.ts (built-in agents) and are matched on the server (custom agents).
+ */
 export function AnamTag({ match }: { match: AnamMatch | undefined }) {
-  const [copied, setCopied] = useState(false)
-  if (!match) return <span className="anam-tag faint">Anam avatar: matching…</span>
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(match.avatarId)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1500)
-    } catch {
-      // clipboard blocked; the id is still selectable in the tooltip
-    }
-  }
+  if (!match) return <span className="anam-tag faint">Live avatar: matching…</span>
   return (
-    <button
-      type="button"
-      className="anam-tag"
-      onClick={() => void copy()}
-      title={`Anam avatar ${match.avatarName ?? ''} ${match.avatarId}\nVoice ${match.voiceName ?? ''} ${match.voiceId}\n${match.fixed ? 'Set on this agent' : 'Matched automatically'} · click to copy the avatar id`}
-    >
+    <span className="anam-tag" title={`Live avatar ${match.avatarName ?? ''} · voice ${match.voiceName ?? ''}`}>
       {match.portrait && <img src={match.portrait} alt="" />}
       <span>
-        Anam: {match.avatarName ?? 'avatar'} · <code>{copied ? 'copied' : match.avatarId}</code>
+        Live avatar: {match.avatarName ?? 'matched'}
+        {match.voiceName && <span className="faint"> · voice {match.voiceName.split(/\s[-–]\s/)[0]}</span>}
       </span>
-    </button>
+    </span>
   )
 }

@@ -6,12 +6,15 @@ import { voiceRouter } from "./voice.js";
 import { mediaRouter } from "./media.js";
 import { synthesiaRouter } from "./synthesia.js";
 import { avatarRouter } from "./avatar.js";
+import { redactSecrets } from "./redact.js";
 import { llmRouter } from "./llm.js";
 import { sessionsRouter } from "./sessions.js";
 import { evalRouter } from "./eval/judge.js";
 
 const app = express();
 app.use(express.json({ limit: "25mb" }));
+// No .env secret ever reaches the browser, even inside an upstream error message.
+app.use("/api", redactSecrets);
 
 app.get("/api/status", (_req, res) => res.json(integrationStatus()));
 app.use("/api/voice", voiceRouter);

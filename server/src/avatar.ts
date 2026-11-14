@@ -19,6 +19,8 @@ interface Listed {
   displayName?: string;
   description?: string;
   activeVersion?: string;
+  /** "realistic" | "illustrated" | "animated_3d" */
+  renderStyle?: string;
   portraitImageUrl?: string;
   imageUrl?: string;
   gender?: string;
@@ -76,19 +78,28 @@ interface AgentInput {
   voiceId?: string;
 }
 
+/** Agents are realistic human beings: Anam's illustrated and 3D-animated avatars are never used. */
+const isRealistic = (a: Listed | undefined) => a?.renderStyle === "realistic";
+
 /**
  * Picks an avatar and voice for an agent. The agent's own ids win; then ANAM_AVATAR_ID /
  * ANAM_VOICE_ID; then a match: same gender, then the avatar whose description shares the most
- * words with the agent's appearance. Ids in `taken` are avoided so a panel never shares a face.
- * Stable per agent name.
+ * words with the agent's appearance. Only realistic avatars are used: an own or env id that points
+ * at an illustrated or animated avatar is ignored. Ids in `taken` are avoided so a panel never
+ * shares a face. Stable per agent name.
  */
 async function pickFor(agent: AgentInput, taken: Set<string> = new Set()) {
   const { avatars, voices } = await loadCatalog();
   const { name, gender } = agent;
-  let avatarId = agent.avatarId || env.anamAvatarId;
+  let avatarId = [agent.avatarId, env.anamAvatarId].find((id) => {
+    if (!id) return false;
+    if (isRealistic(avatars.find((a) => a.id === id))) return true;
+    console.warn(`[avatar] ${name}: avatar ${id} is not a realistic human (or not on this account); matching one instead`);
+    return false;
+  });
   if (!avatarId) {
-    const cara4 = avatars.filter((a) => a.activeVersion === "cara-4");
-    const base = cara4.length ? cara4 : avatars;
+    const realistic = avatars.filter((a) => isRealistic(a) && a.activeVersion === "cara-4");
+    const base = realistic.length ? realistic : avatars.filter(isRealistic);
     const sameGender = base.filter((a) => !gender || avatarGender(a) === gender);
     const pool = (sameGender.length ? sameGender : base).filter((a) => !taken.has(a.id));
     const wanted = words(agent.look ?? "");
@@ -113,7 +124,7 @@ async function pickFor(agent: AgentInput, taken: Set<string> = new Set()) {
     voiceName: voice?.displayName,
     portrait: avatar?.portraitImageUrl ?? avatar?.imageUrl,
     /** Whether the id came from the agent itself rather than the automatic match */
-    fixed: Boolean(agent.avatarId),
+    fixed: Boolean(agent.avatarId) && avatarId === agent.avatarId,
   };
 }
 
@@ -139,13 +150,13 @@ avatarRouter.post("/anam-match", async (req, res) => {
   }
 });
 
-/** Avatars and voices on the account, for picking ANAM_AVATAR_ID / ANAM_VOICE_ID. */
+/** Realistic avatars and voices on the account, for picking an agent's ids. */
 avatarRouter.get("/anam-options", async (_req, res) => {
   if (!env.anamKey) return res.status(503).json({ error: "Anam is not configured" });
   try {
     const { avatars, voices } = await loadCatalog();
     res.json({
-      avatars: avatars.map((a) => ({ id: a.id, name: a.displayName, model: a.activeVersion, description: a.description, image: a.portraitImageUrl })),
+      avatars: avatars.filter(isRealistic).map((a) => ({ id: a.id, name: a.displayName, model: a.activeVersion, description: a.description, image: a.portraitImageUrl })),
       voices: voices.map((v) => ({ id: v.id, name: v.displayName, gender: v.gender, languages: v.languages })),
     });
   } catch (err) {

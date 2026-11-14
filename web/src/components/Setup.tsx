@@ -284,19 +284,8 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
                         </label>
                       </div>
                       <input type="text" value={p.look} onChange={(e) => updatePersona(i, { look: e.target.value })} aria-label="Appearance for the portrait" placeholder="Appearance, used to generate the portrait" />
-                      {status.anam && (
-                        <div className="row small" style={{ flexWrap: 'wrap' }}>
-                          <input
-                            type="text"
-                            value={p.anamAvatarId ?? ''}
-                            onChange={(e) => updatePersona(i, { anamAvatarId: e.target.value.trim() || undefined })}
-                            aria-label="Anam avatar id"
-                            placeholder="Anam avatar id (optional, otherwise matched)"
-                            style={{ flex: '1 1 220px' }}
-                          />
-                          <AnamTag match={anamMatches?.[i]} />
-                        </div>
-                      )}
+                      {/* A realistic live avatar is matched to the appearance; no ids are shown or typed here. */}
+                      {status.anam && <AnamTag match={anamMatches?.[i]} />}
                     </div>
                   </div>
                 ))}
