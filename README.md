@@ -1,4 +1,4 @@
-# Pitch sparring partner
+# Pitch Perfect
 
 Practise a pitch in front of an AI panel that listens, reacts with micro-expressions, asks you hard questions out loud, and then gives you a report and the full recording.
 
