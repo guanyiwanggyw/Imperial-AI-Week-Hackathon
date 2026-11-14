@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { formatTime } from '../lib/metrics'
+import { formatTime } from '../eval/metrics'
 
 export interface Point {
   t: number

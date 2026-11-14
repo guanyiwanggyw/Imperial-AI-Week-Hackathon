@@ -3,7 +3,7 @@ import { getJson, getStatus, type Status } from './api'
 import { Report } from './components/Report'
 import { Session } from './components/Session'
 import { Setup } from './components/Setup'
-import { loadVision } from './lib/vision'
+import { loadVision } from './eval/signals/vision'
 import type { SessionConfig, SessionData } from './types'
 
 type View =

@@ -1,41 +1,18 @@
 // Delivery analysis. Pure functions over words, audio samples and vision samples,
 // used live on the session screen and again (on the accurate transcript) for the report.
+// Delivery scores are 0–100.
 import type { AudioSample, DeliveryScore, SessionData, VisionSample, Word } from '../types'
+import { T } from './thresholds'
 
-/** How much content weighs against delivery in the overall score. Delivery gets 1 - CONTENT_WEIGHT. */
-export const CONTENT_WEIGHT = 0.65
+import { clean, fillerIndices } from './transcript/fillers'
+export { clean, fillerIndices }
 
-const SINGLE_FILLERS = new Set(['um', 'uh', 'erm', 'er', 'ah', 'uhm', 'hmm', 'mm', 'umm', 'uhh'])
-const PHRASE_FILLERS = [
-  ['you', 'know'],
-  ['i', 'mean'],
-  ['sort', 'of'],
-  ['kind', 'of'],
-]
-const SOFT_FILLERS = new Set(['basically', 'literally'])
-
-export const clean = (w: string) => w.toLowerCase().replace(/[^a-z']/g, '')
-export const clamp = (n: number, lo = 0, hi = 10) => Math.min(hi, Math.max(lo, n))
+export const clamp = (n: number, lo = 0, hi = 100) => Math.min(hi, Math.max(lo, n))
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
 const std = (xs: number[]) => {
   if (xs.length < 2) return 0
   const m = mean(xs)
   return Math.sqrt(mean(xs.map((x) => (x - m) ** 2)))
-}
-
-/** Indices of words that are fillers. Phrase fillers mark the first word only. */
-export function fillerIndices(words: Word[]): number[] {
-  const out: number[] = []
-  for (let i = 0; i < words.length; i++) {
-    const w = clean(words[i].text)
-    if (SINGLE_FILLERS.has(w) || SOFT_FILLERS.has(w)) {
-      out.push(i)
-      continue
-    }
-    const next = clean(words[i + 1]?.text ?? '')
-    if (PHRASE_FILLERS.some(([a, b]) => a === w && b === next)) out.push(i)
-  }
-  return out
 }
 
 export interface Pause {
@@ -127,11 +104,12 @@ export function gestureSummary(vision: VisionSample[], from: number, to: number)
 
 // ---------- delivery scores ----------
 
-function paceScore(wpm: number) {
-  // Ideal conversational pitch pace is roughly 130 to 165 wpm.
-  if (wpm >= 130 && wpm <= 165) return 10
-  if (wpm < 130) return clamp(10 - (130 - wpm) / 6)
-  return clamp(10 - (wpm - 165) / 5)
+/** 0–100. Ideal pitch pace is roughly 130 to 160 wpm. */
+export function paceScore(wpm: number) {
+  const [lo, hi] = T.voice.paceGood
+  if (wpm >= lo && wpm <= hi) return 100
+  if (wpm < lo) return clamp(100 - ((lo - wpm) / 6) * 10)
+  return clamp(100 - ((wpm - hi) / 5) * 10)
 }
 
 export interface DeliveryStats {
@@ -182,23 +160,23 @@ export function deliveryScores(s: DeliveryStats): DeliveryScore[] {
       note:
         s.wpm === null
           ? 'Too little speech was captured to measure pace.'
-          : s.wpm > 165
+          : s.wpm > T.voice.paceGood[1]
             ? 'Faster than most audiences can follow. Slow down on key points.'
-            : s.wpm < 130
+            : s.wpm < T.voice.paceGood[0]
               ? 'On the slow side. Tighten sentences to keep energy up.'
               : 'A comfortable pace for a pitch.',
     },
     {
       key: 'fillers',
       label: 'Fillers',
-      score: s.wpm === null ? null : clamp(10 - s.fillersPerMin * 1.5),
+      score: s.wpm === null ? null : clamp(100 - s.fillersPerMin * 15),
       value: `${s.fillers} (${s.fillersPerMin.toFixed(1)} per min)`,
       note: s.fillersPerMin > 4 ? 'Fillers are frequent. Replace them with a short silent pause.' : 'Fillers are under control.',
     },
     {
       key: 'pauses',
       label: 'Pauses',
-      score: s.wpm === null ? null : clamp(10 - (s.hesitations / minutes) * 2 + Math.min(s.deliberatePauses, 4) * 0.25),
+      score: s.wpm === null ? null : clamp(100 - (s.hesitations / minutes) * 20 + Math.min(s.deliberatePauses, 4) * 2.5),
       value: `${s.deliberatePauses} deliberate, ${s.hesitations} hesitant`,
       note:
         s.hesitations > s.deliberatePauses
@@ -208,7 +186,7 @@ export function deliveryScores(s: DeliveryStats): DeliveryScore[] {
     {
       key: 'eye_contact',
       label: 'Eye contact',
-      score: s.eyeContact === null ? null : clamp(s.eyeContact * 12 - 1),
+      score: s.eyeContact === null ? null : clamp(s.eyeContact * 120 - 10),
       value: s.eyeContact === null ? 'Not measured' : pct(s.eyeContact),
       note:
         s.eyeContact === null
@@ -220,7 +198,7 @@ export function deliveryScores(s: DeliveryStats): DeliveryScore[] {
     {
       key: 'gestures',
       label: 'Gestures',
-      score: s.gestures === null ? null : s.gestures.level === 'natural' ? 9 : s.gestures.level === 'still' ? 6 : 5,
+      score: s.gestures === null ? null : s.gestures.level === 'natural' ? 90 : s.gestures.level === 'still' ? 60 : 50,
       value: s.gestures === null ? 'Not measured' : `${s.gestures.level}, hands visible ${pct(s.gestures.handsVisibleShare)}`,
       note:
         s.gestures === null
@@ -234,7 +212,7 @@ export function deliveryScores(s: DeliveryStats): DeliveryScore[] {
     {
       key: 'tonality',
       label: 'Tonality',
-      score: s.expressiveness === null ? null : clamp(s.expressiveness * 12),
+      score: s.expressiveness === null ? null : clamp(s.expressiveness * 120),
       value: s.expressiveness === null ? 'Not measured' : s.expressiveness < 0.35 ? 'Monotone' : s.expressiveness < 0.65 ? 'Varied' : 'Expressive',
       note:
         s.expressiveness === null
@@ -269,7 +247,7 @@ export function bestMoment(session: Pick<SessionData, 'words' | 'audio' | 'visio
     const expr = expressiveness(session.audio, start, end)
     const strong = session.events.filter((e) => e.type === 'strong_moment' && e.t >= start && e.t <= end).length
     const score =
-      (wpm ? paceScore(wpm) : 5) - fillerCount * 2 - hes * 1.5 + (eye ?? 0.5) * 4 + (expr ?? 0.4) * 4 + strong * 2
+      (wpm ? paceScore(wpm) / 10 : 5) - fillerCount * 2 - hes * 1.5 + (eye ?? 0.5) * 4 + (expr ?? 0.4) * 4 + strong * 2
     if (!best || score > best.score) best = { start, score }
   }
   if (!best) return null

@@ -1,4 +1,8 @@
 // Shared data shapes. All times are seconds since the session recording started.
+import type { ContentEvaluation, EvaluationResult } from './eval/contracts'
+
+// Evaluation types live in eval/contracts.ts (owned by the evaluation workstream).
+export type { ContentEvaluation, DimensionScore, EvaluationResult } from './eval/contracts'
 
 export type Reaction = 'nod' | 'smile' | 'frown' | 'glance' | 'sceptical'
 
@@ -117,37 +121,21 @@ export interface SessionData {
   qna: QnaTurn[]
   recordingUrl: string | null
   report: Report | null
-}
-
-export interface DimensionScore {
-  score: number
-  justification: string
-  evidence_time_sec: number | null
-}
-
-export interface ContentEvaluation {
-  summary: string
-  dimensions: {
-    overall_pitch: DimensionScore
-    clarity: DimensionScore
-    depth: DimensionScore
-    qna: DimensionScore
-    composure: DimensionScore
-  }
-  qna_feedback: { question_index: number; score: number; feedback: string }[]
-  priorities: { title: string; detail: string; evidence_time_sec: number | null }[]
-  best_moment_note: string
+  /** Full evaluation (samples, phrases, feedback events, score series, final scores). Absent on older sessions. */
+  evaluation?: EvaluationResult | null
 }
 
 export interface DeliveryScore {
   key: 'pace' | 'fillers' | 'pauses' | 'eye_contact' | 'gestures' | 'tonality'
   label: string
-  score: number | null // 0 to 10, null when the signal was unreliable
+  score: number | null // 0 to 100, null when the signal was unreliable
   value: string
   note: string
 }
 
 export interface Report {
+  /** 100 for reports scored 0–100. Older saved reports are 0–10 and have no scale. */
+  scale?: 100
   overall: number
   /** True when too little speech was captured for the scores to mean anything */
   insufficientSpeech: boolean

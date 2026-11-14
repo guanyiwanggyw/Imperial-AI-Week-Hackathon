@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { errorText, postForm, type Status } from '../api'
-import { AudioMeter } from '../lib/audioFeatures'
-import { buildReport } from '../lib/evaluate'
-import { chooseReaction, LiveEventEngine } from '../lib/liveEvents'
-import { LiveTranscript } from '../lib/liveTranscript'
+import { postForm, type Status } from '../api'
+import { buildReport } from '../eval/evaluate'
+import { LiveEventEngine } from '../eval/liveEvents'
+import { deliveryStats, eyeContactShare, fillerIndices, formatTime, timestampedTranscript, wpmBetween } from '../eval/metrics'
+import { EvalSession } from '../eval/runtime'
 import { backdropKey, loadAssets, type Assets } from '../lib/media'
-import { deliveryStats, eyeContactShare, fillerIndices, formatTime, timestampedTranscript, wpmBetween } from '../lib/metrics'
 import { planQuestions, runTurn, type QnaMode } from '../lib/qna'
+import { chooseReaction } from '../lib/reactions'
 import { SessionRecorder } from '../lib/recorder'
-import { VisionTracker } from '../lib/vision'
 import type { QnaTurn, SessionConfig, SessionData, SessionEvent, Word } from '../types'
 import { anamVideoId, Audience, type ActiveReaction } from './Audience'
 
@@ -55,16 +54,18 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const { panel, slides } = config
   const clock = useRef(new Clock()).current
   const recorder = useRef<SessionRecorder | null>(null)
-  const meter = useRef(new AudioMeter()).current
-  const vision = useRef(new VisionTracker()).current
   const [, force] = useState(0)
   const rerender = useCallback(() => force((n) => n + 1), [])
-  const transcript = useRef(new LiveTranscript(rerender)).current
+  // Evaluation engine: camera/mic analysis, live transcript, RoomState, rule events, background judge.
+  const evalRef = useRef<EvalSession | null>(null)
+  evalRef.current ??= new EvalSession({ stream, onUpdate: rerender, context: () => config.context, judge: status.anthropic })
+  const evalRt = evalRef.current
+  const transcript = evalRt.transcript
   const selfView = useRef<HTMLVideoElement>(null)
 
   const [phase, setPhase] = useState<Phase>('countdown')
   const phaseRef = useRef<Phase>('countdown')
-  const [countdown, setCountdown] = useState(3)
+  const [countdown, setCountdown] = useState(5)
   const [paused, setPaused] = useState(false)
   const [slide, setSlide] = useState(0)
   const slideChanges = useRef<{ t: number; slide: number }[]>([])
@@ -118,9 +119,13 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
 
   useEffect(() => {
     stopQna.current = false
-    if (selfView.current) selfView.current.srcObject = stream
+    if (selfView.current) {
+      selfView.current.srcObject = stream
+      // Calibrate during the countdown: the speaker looks at the panel and stands naturally.
+      evalRt.startCalibration(selfView.current)
+    }
     void loadAssets().then(setAssets)
-    let n = 3
+    let n = 5
     const timer = window.setInterval(() => {
       n -= 1
       setCountdown(n)
@@ -130,20 +135,13 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
       const rec = new SessionRecorder(stream)
       rec.start()
       recorder.current = rec
-      meter.start(stream, clock.now, () => !clock.paused)
-      if (selfView.current) void vision.start(selfView.current, clock.now, () => !clock.paused)
-      transcript.start(clock.now).catch((err) => {
-        transcript.error = errorText(err)
-        rerender()
-      })
+      evalRt.start(clock.now, () => !clock.paused)
       slideChanges.current = [{ t: 0, slide: 0 }]
       setPhaseBoth('pitch')
     }, 1000)
     return () => {
       window.clearInterval(timer)
-      meter.stop()
-      vision.stop()
-      transcript.stop()
+      evalRt.stop()
       skipRef.current?.abort()
       stopQna.current = true
     }
@@ -157,15 +155,15 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
       setNow(t)
       if (phaseRef.current !== 'pitch' || clock.paused) return
       const words = transcript.words
-      engine.current!.tick(t, words, meter.samples, vision.samples, meter.lastVoiceAt)
+      engine.current!.tick(t, words, evalRt.sampler.legacyAudio, evalRt.sampler.legacyVision, evalRt.lastVoiceT())
       setLive({
         wpm: wpmBetween(words, t - 30, t),
         fillers: fillerIndices(words).length,
-        eye: eyeContactShare(vision.samples, t - 30, t),
+        eye: eyeContactShare(evalRt.sampler.legacyVision, t - 30, t),
       })
     }, 1000)
     return () => window.clearInterval(timer)
-  }, [clock, meter, transcript, vision])
+  }, [clock, evalRt, transcript])
 
   // ---------- slides ----------
 
@@ -229,7 +227,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const pitchWords = (): Word[] => transcript.words.filter((w) => w.start < pitchEnd.current)
 
   function metricsSummary() {
-    const s = deliveryStats({ words: pitchWords(), audio: meter.samples, vision: vision.samples, slideChanges: slideChanges.current, pitchEnd: pitchEnd.current })
+    const s = deliveryStats({ words: pitchWords(), audio: evalRt.sampler.legacyAudio, vision: evalRt.sampler.legacyVision, slideChanges: slideChanges.current, pitchEnd: pitchEnd.current })
     return [
       s.wpm ? `Pace ${Math.round(s.wpm)} words per minute.` : 'Pace not measured.',
       `${s.fillers} filler words.`,
@@ -243,6 +241,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
     if (clock.paused) togglePause()
     const t = clock.now()
     pitchEnd.current = t
+    evalRt.markPitchEnded(t)
     engine.current!.emit('pitch_ended', t, undefined, true)
     setReactions({})
     if (config.questionCount === 0) return finish()
@@ -279,8 +278,14 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
           engine.current!.events.push(e)
           onEvent(e)
         },
-        onSpeaking: setSpeaking,
-        onCaption: setCaption,
+        onSpeaking: (on: boolean) => {
+          setSpeaking(on)
+          evalRt.agentSpeaking(on, persona.name)
+        },
+        onCaption: (text: string) => {
+          setCaption(text)
+          evalRt.agentCaption(text)
+        },
         videoElementId: anamVideoId(persona.id),
       }
       let turn: QnaTurn | null = null
@@ -302,6 +307,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
         turns.current.push(turn)
         engine.current!.emit('answer_given', turn.end, persona.name, true)
       }
+      evalRt.exchangeEnded()
     }
     setActiveId(null)
     void finish()
@@ -315,9 +321,9 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
     const duration = clock.now()
     if (!pitchEnd.current) pitchEnd.current = duration
     setFinishStep('Saving the recording')
-    transcript.stop()
-    meter.stop()
-    vision.stop()
+    evalRt.stop()
+    // Background judge segments finish while the recording saves and the transcript is refined.
+    const judgeDone = evalRt.flushJudge()
     const files = recorder.current ? await recorder.current.stop() : null
     const localRecording = files ? URL.createObjectURL(files.video) : null
 
@@ -333,8 +339,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
       events: engine.current!.events,
       liveWords: transcript.words,
       words: transcript.words,
-      vision: vision.samples,
-      audio: meter.samples,
+      vision: evalRt.sampler.legacyVision,
+      audio: evalRt.sampler.legacyAudio,
       qna: turns.current,
       recordingUrl: null,
       report: null,
@@ -363,7 +369,10 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
     }
 
     setFinishStep('Writing your report')
-    session.report = await buildReport(session)
+    await judgeDone
+    const built = await buildReport(session, evalRt.capture(), { skipJudge: !status.anthropic })
+    session.report = built.report
+    session.evaluation = built.evaluation
     try {
       await fetch(`/api/sessions/${id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(session) })
     } catch {
@@ -526,7 +535,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
         <div className="overlay">
           <div className="card">
             <div className="countdown">{countdown}</div>
-            <p className="muted">Look at the camera and begin when the count ends.</p>
+            <p className="muted">Look at the panel and stand naturally. Begin when the count ends.</p>
             {slides.length > 0 && <p className="faint">Use the arrow keys to change slides.</p>}
           </div>
         </div>

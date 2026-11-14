@@ -1,4 +1,4 @@
-// Copies the MediaPipe wasm runtime and downloads the two vision models into web/public/mediapipe,
+// Copies the MediaPipe wasm runtime and downloads the vision models (face, hands, pose) into web/public/mediapipe,
 // so eye contact and gesture tracking work without a network connection during the demo.
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -11,6 +11,7 @@ const wasmSrc = path.join(root, "web", "node_modules", "@mediapipe", "tasks-visi
 const models = {
   "face_landmarker.task": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
   "hand_landmarker.task": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+  "pose_landmarker_lite.task": "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
 };
 
 await fs.mkdir(path.join(out, "wasm"), { recursive: true });

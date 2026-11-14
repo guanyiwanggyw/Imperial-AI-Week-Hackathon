@@ -1,10 +1,15 @@
 // Live transcript with ElevenLabs Scribe realtime. The browser gets a single-use token from our server.
+// Verbatim mode (noVerbatim: false) keeps "um" and "uh", which the filler metrics need.
+// Each VAD commit becomes one Phrase.
 import { CommitStrategy, RealtimeEvents, Scribe, type RealtimeConnection } from '@elevenlabs/client'
-import { getJson } from '../api'
-import type { Word } from '../types'
+import { getJson } from '../../api'
+import type { Word } from '../../types'
+import type { Phrase } from '../contracts'
+import { makePhrase } from './phrases'
 
 export class LiveTranscript {
   words: Word[] = []
+  phrases: Phrase[] = []
   partial = ''
   error: string | null = null
   private conn: RealtimeConnection | null = null
@@ -12,8 +17,10 @@ export class LiveTranscript {
   private lastCommitAt = 0
 
   private onUpdate: () => void
-  constructor(onUpdate: () => void) {
+  private onPhrase?: (p: Phrase) => void
+  constructor(onUpdate: () => void, onPhrase?: (p: Phrase) => void) {
     this.onUpdate = onUpdate
+    this.onPhrase = onPhrase
   }
 
   async start(now: () => number, deviceId?: string) {
@@ -22,7 +29,9 @@ export class LiveTranscript {
       token,
       modelId: 'scribe_v2_realtime',
       commitStrategy: CommitStrategy.VAD,
-      vadSilenceThresholdSecs: 0.8,
+      // ~0.5 s silence commits a phrase (brief). Shorter = faster agent reactions, more phrases.
+      vadSilenceThresholdSecs: 0.5,
+      noVerbatim: false,
       includeTimestamps: true,
       languageCode: 'en',
       microphone: { deviceId, echoCancellation: true, noiseSuppression: true },
@@ -38,15 +47,22 @@ export class LiveTranscript {
     })
     conn.on(RealtimeEvents.COMMITTED_TRANSCRIPT_WITH_TIMESTAMPS, (data) => {
       const timed = (data.words ?? []).filter((w) => w.type === 'word' && w.start !== undefined && w.end !== undefined)
+      let added: Word[] = []
       if (timed.length) {
-        this.words.push(...timed.map((w) => ({ text: w.text, start: this.audioStartedAt + w.start!, end: this.audioStartedAt + w.end! })))
+        added = timed.map((w) => ({ text: w.text, start: this.audioStartedAt + w.start!, end: this.audioStartedAt + w.end! }))
       } else if (data.text.trim()) {
         // No timestamps: spread the words evenly since the last commit.
         const tokens = data.text.trim().split(/\s+/)
         const end = now()
         const start = Math.max(this.lastCommitAt, end - tokens.length * 0.4)
         const step = (end - start) / tokens.length
-        tokens.forEach((text, i) => this.words.push({ text, start: start + i * step, end: start + (i + 1) * step }))
+        added = tokens.map((text, i) => ({ text, start: start + i * step, end: start + (i + 1) * step }))
+      }
+      this.words.push(...added)
+      const phrase = makePhrase(added)
+      if (phrase) {
+        this.phrases.push(phrase)
+        this.onPhrase?.(phrase)
       }
       this.lastCommitAt = now()
       this.partial = ''

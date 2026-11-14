@@ -1,5 +1,5 @@
 import type { QnaMode } from '../lib/qna'
-import { REACTION_LABEL } from '../lib/liveEvents'
+import { REACTION_LABEL } from '../lib/reactions'
 import { initials, portraitKey, reactionKey, type Assets } from '../lib/media'
 import type { Persona, Reaction } from '../types'
 

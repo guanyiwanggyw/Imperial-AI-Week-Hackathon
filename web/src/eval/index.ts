@@ -1,0 +1,13 @@
+// Public surface of the evaluation engine. Other workstreams should import from here.
+export * from './contracts'
+export { T as THRESHOLDS } from './thresholds'
+export { EvalSession, type EvalSessionOptions } from './runtime'
+export { computeRoomState, type RoomInput } from './roomState'
+export { RuleEngine } from './rules'
+export { buildScoreSeries, computeFinalScores } from './scores'
+export { computeTiming } from './timing'
+export { assembleEvaluation } from './assemble'
+export { buildReport, type EvalCapture } from './evaluate'
+export { useSignals } from './signals/useSignals'
+export { makeFakeData, replayLive, fakeEvaluation, playFake } from './fake'
+export { formatTime } from './metrics'

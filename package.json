@@ -9,6 +9,8 @@
     "create-agent": "npm run create-agent --prefix server",
     "build": "npm run build --prefix web",
     "start": "npm start --prefix server",
-    "typecheck": "npm run typecheck --prefix server && npx --prefix web tsc -b web"
+    "typecheck": "npm run typecheck --prefix server && npx --prefix web tsc -b web",
+    "eval:calibrate": "server/node_modules/.bin/tsx web/src/eval/cli/calibrate.ts",
+    "eval:typecheck": "npx --prefix web tsc -p web/src/eval/cli --noEmit"
   }
 }

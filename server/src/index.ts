@@ -6,6 +6,7 @@ import { voiceRouter } from "./voice.js";
 import { mediaRouter } from "./media.js";
 import { llmRouter } from "./llm.js";
 import { sessionsRouter } from "./sessions.js";
+import { evalRouter } from "./eval/judge.js";
 
 const app = express();
 app.use(express.json({ limit: "25mb" }));
@@ -15,6 +16,7 @@ app.use("/api/voice", voiceRouter);
 app.use("/api/media", mediaRouter);
 app.use("/api/llm", llmRouter);
 app.use("/api/sessions", sessionsRouter);
+app.use("/api/eval", evalRouter);
 
 app.use("/generated", express.static(path.join(DATA_DIR, "generated"), { maxAge: "1h" }));
 app.use("/media/sessions", express.static(path.join(DATA_DIR, "sessions")));

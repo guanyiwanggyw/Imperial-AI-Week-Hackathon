@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { expressiveness, eyeContactShare, fillerIndices, findPauses, formatTime, wpmBetween, windows } from '../lib/metrics'
+import { expressiveness, eyeContactShare, fillerIndices, findPauses, formatTime, wpmBetween, windows } from '../eval/metrics'
 import type { DimensionScore, SessionData } from '../types'
 import { Sparkline } from './Sparkline'
 
@@ -18,13 +18,15 @@ const DIMENSION_LABELS = {
 } as const
 
 const fmt1 = (n: number) => n.toFixed(1)
+/** Scores are 0–100. Reports saved before the switch are 0–10; `k` scales them up. */
+const fmtScore = (n: number, k = 1) => String(Math.round(n * k))
 
-function ScoreBar({ label, score, hint }: { label: string; score: number | null; hint?: string }) {
+function ScoreBar({ label, score, hint, k = 1 }: { label: string; score: number | null; hint?: string; k?: number }) {
   return (
     <div className="bar-row" title={hint}>
       <span>{label}</span>
-      <div className="track">{score !== null && <div className="fill" style={{ width: `${score * 10}%` }} />}</div>
-      <span className="v">{score === null ? '–' : fmt1(score)}</span>
+      <div className="track">{score !== null && <div className="fill" style={{ width: `${Math.min(100, score * k)}%` }} />}</div>
+      <span className="v">{score === null ? '–' : fmtScore(score, k)}</span>
     </div>
   )
 }
@@ -78,6 +80,8 @@ export function Report({ session, localRecording, onNew }: Props) {
     )
   }
 
+  const k = report.scale === 100 ? 1 : 10
+  const ev = session.evaluation ?? null
   const recording = session.recordingUrl ?? localRecording
   const byKey = Object.fromEntries(report.delivery.map((d) => [d.key, d]))
 
@@ -112,14 +116,16 @@ export function Report({ session, localRecording, onNew }: Props) {
       {/* 1. Overall with component scores */}
       <section className="card report-top">
         <div className="score-hero">
-          <span className="big">{report.insufficientSpeech ? '–' : fmt1(report.overall)}</span>
-          <span className="out">out of 10</span>
+          <span className="big">{report.insufficientSpeech ? '–' : fmtScore(report.overall, k)}</span>
+          <span className="out">out of 100</span>
           <span className="faint" style={{ marginTop: 8 }}>
-            {report.contentScore !== null && report.deliveryScore !== null
-              ? `Content ${Math.round(report.contentWeight * 100)}%, delivery ${Math.round((1 - report.contentWeight) * 100)}%`
-              : report.contentScore === null
-                ? 'Delivery only'
-                : 'Content only'}
+            {ev
+              ? `Eye ${ev.finalScores.eye} · Body ${ev.finalScores.body} · Tone ${ev.finalScores.tone} · Coherency ${ev.finalScores.coherency} · Timing ${ev.timingScore}`
+              : report.contentScore !== null && report.deliveryScore !== null
+                ? `Content ${Math.round(report.contentWeight * 100)}%, delivery ${Math.round((1 - report.contentWeight) * 100)}%`
+                : report.contentScore === null
+                  ? 'Delivery only'
+                  : 'Content only'}
           </span>
         </div>
         <div className="stack">
@@ -129,16 +135,16 @@ export function Report({ session, localRecording, onNew }: Props) {
           {report.content ? <p>{report.content.summary}</p> : <div className="notice">Content evaluation unavailable{report.contentError ? `: ${report.contentError}` : ''}. The score uses delivery only.</div>}
           <div className="components">
             <div className="stack" style={{ gap: 8 }}>
-              <ScoreBar label="Content" score={report.contentScore} />
+              <ScoreBar label="Content" score={report.contentScore} k={k} />
               {report.content &&
-                (Object.keys(DIMENSION_LABELS) as (keyof typeof DIMENSION_LABELS)[]).map((k) => (
-                  <ScoreBar key={k} label={DIMENSION_LABELS[k]} score={report.content!.dimensions[k].score} />
+                (Object.keys(DIMENSION_LABELS) as (keyof typeof DIMENSION_LABELS)[]).map((d) => (
+                  <ScoreBar key={d} label={DIMENSION_LABELS[d]} score={report.content!.dimensions[d].score} k={k} />
                 ))}
             </div>
             <div className="stack" style={{ gap: 8 }}>
-              <ScoreBar label="Delivery" score={report.deliveryScore} />
+              <ScoreBar label="Delivery" score={report.deliveryScore} k={k} />
               {report.delivery.map((d) => (
-                <ScoreBar key={d.key} label={d.label} score={d.score} hint={d.value} />
+                <ScoreBar key={d.key} label={d.label} score={d.score} hint={d.value} k={k} />
               ))}
             </div>
           </div>
@@ -288,11 +294,11 @@ export function Report({ session, localRecording, onNew }: Props) {
       {report.content && (
         <section className="section card">
           <h2 style={{ marginBottom: 12 }}>Content feedback</h2>
-          {(Object.entries(report.content.dimensions) as [keyof typeof DIMENSION_LABELS, DimensionScore][]).map(([k, d]) => (
-            <div key={k} className="qa">
+          {(Object.entries(report.content.dimensions) as [keyof typeof DIMENSION_LABELS, DimensionScore][]).map(([dim, d]) => (
+            <div key={dim} className="qa">
               <div className="row">
-                <strong>{DIMENSION_LABELS[k]}</strong>
-                <span className="faint num">{fmt1(d.score)}</span>
+                <strong>{DIMENSION_LABELS[dim]}</strong>
+                <span className="faint num">{fmtScore(d.score, k)}</span>
                 <span className="spacer" />
                 {d.evidence_time_sec !== null && (
                   <button className="jump" onClick={() => seek(d.evidence_time_sec)}>
@@ -316,7 +322,7 @@ export function Report({ session, localRecording, onNew }: Props) {
                 <div className="row">
                   <span className="faint">{q.personaName}</span>
                   <span className="spacer" />
-                  {fb && <span className="faint num">{fmt1(fb.score)}</span>}
+                  {fb && <span className="faint num">{fmtScore(fb.score, k)}</span>}
                   <button className="jump" onClick={() => seek(q.start)}>
                     {formatTime(q.start)}
                   </button>
