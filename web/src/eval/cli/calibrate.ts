@@ -21,7 +21,7 @@ interface Row {
   id: string
   label: Label
   duration: number
-  scores: EvaluationResult['finalScores'] & { timing: number }
+  scores: EvaluationResult['finalScores'] & { timing: number | null }
   unmeasured: string[]
   raw: ReturnType<typeof signalSummary> & { longest_monologue_s: number; rule_events: number }
 }
@@ -41,7 +41,7 @@ function score(id: string, label: Label, d: { samples: SampleX[]; phrases: Phras
   const content = null
   const ev = assembleEvaluation({ ...d, ruleEvents, segments: [], calibration: null, content })
   // Keep a previously judged coherency so re-scoring only reflects threshold changes.
-  if (d.claudeCoherency !== null) ev.finalScores.coherency = Math.round(0.65 * d.claudeCoherency + 0.35 * ev.finalScores.coherency)
+  if (d.claudeCoherency !== null && !ev.insufficientSpeech) ev.finalScores.coherency = Math.round(0.65 * d.claudeCoherency + 0.35 * ev.finalScores.coherency)
   return {
     id,
     label,
@@ -96,7 +96,7 @@ for (const r of rows) {
   const un = (c: string, v: number) => (r.unmeasured.includes(c) ? 'n/a' : v)
   console.log(
     [
-      pad(r.id, 20), pad(r.label, 5), pad(r.duration, 5), pad(un('eye', s.eye), 4), pad(un('body', s.body), 4), pad(un('tone', s.tone), 4), pad(un('coherency', s.coherency), 4), pad(s.timing, 4), pad(s.overall, 4), '|',
+      pad(r.id, 20), pad(r.label, 5), pad(r.duration, 5), pad(un('eye', s.eye), 4), pad(un('body', s.body), 4), pad(un('tone', s.tone), 4), pad(un('coherency', s.coherency), 4), pad(s.timing ?? 'n/a', 4), pad(s.overall, 4), '|',
       pad(num(r.raw.eye_on_target_share), 8), pad(num(r.raw.arms_open_share), 8), pad(num(r.raw.pitch_variety_semitones, 1), 7), pad(r.raw.filler_words, 7), pad(r.raw.words_per_minute, 4), pad(r.raw.longest_monologue_s, 5), pad(r.raw.rule_events, 5),
     ].join(' '),
   )
@@ -108,8 +108,8 @@ if (good.length && bad.length) {
   const mean = (xs: number[]) => xs.reduce((a, b) => a + b, 0) / xs.length
   console.log('\nSeparation (mean good − mean bad; want clearly positive):')
   for (const k of ['eye', 'body', 'tone', 'coherency', 'timing', 'overall'] as const) {
-    const g = mean(good.map((r) => r.scores[k]))
-    const b = mean(bad.map((r) => r.scores[k]))
+    const g = mean(good.map((r) => r.scores[k] ?? 0))
+    const b = mean(bad.map((r) => r.scores[k] ?? 0))
     console.log(`  ${k.padEnd(10)} ${g.toFixed(0).padStart(4)} vs ${b.toFixed(0).padStart(4)}  Δ ${(g - b).toFixed(0)}`)
   }
   let ordered = 0

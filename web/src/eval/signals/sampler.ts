@@ -70,12 +70,38 @@ export class SignalSampler {
   private prevAt = 0
   private handSpeed = 0
   private lastFrameAt = 0
+  private jaw: { at: number; v: number }[] = []
+  private lastFaceAt = -Infinity
   private vision: VisionTracker
   private audio: AudioMeter
+  private agentAudible: () => boolean
 
-  constructor(vision: VisionTracker, audio: AudioMeter) {
+  /** `agentAudible`: a panel voice is playing right now (its audio can leak into the mic). */
+  constructor(vision: VisionTracker, audio: AudioMeter, agentAudible: () => boolean = () => false) {
     this.vision = vision
     this.audio = audio
+    this.agentAudible = agentAudible
+  }
+
+  /**
+   * Whose voice is it? The mic hears everyone in the room (and the panel through the speakers), so voice activity
+   * only counts as the speaker when their mouth is moving. Without a visible face we fall back to the mic alone,
+   * except while a panel voice is playing.
+   */
+  private mouthMoving(vf: VisionFrame | null, now: number): boolean | null {
+    if (!vf?.face) {
+      // Face seen recently: it is hidden or turned away, so we can't attribute the voice. Otherwise the camera is off.
+      return now - this.lastFaceAt < T.voice.faceRecentSec * 1000 ? false : null
+    }
+    this.lastFaceAt = now
+    if (vf.at !== this.jaw[this.jaw.length - 1]?.at) this.jaw.push({ at: vf.at, v: vf.jawOpen })
+    while (this.jaw.length && vf.at - this.jaw[0].at > 10_000) this.jaw.shift()
+    const recent = this.jaw.filter((j) => vf.at - j.at <= 1000).map((j) => j.v)
+    if (recent.length < 3) return false
+    const sorted = this.jaw.map((j) => j.v).sort((a, b) => a - b)
+    const rest = sorted[Math.floor(sorted.length * 0.2)]
+    const max = Math.max(...recent)
+    return max - Math.min(...recent) > T.voice.mouthMoveMin && max - rest > T.voice.mouthOpenMin
   }
 
   /** `now` is the shared session clock (seconds since recording start). */
@@ -120,13 +146,20 @@ export class SignalSampler {
 
     const v = visionToSample(vf, this.calibration)
     const tt = round(t)
+    const micVoice = af?.speaking ?? false
+    const mouth = this.mouthMoving(vf, at)
+    const speaking = micVoice && (mouth === null ? !this.agentAudible() : mouth)
     const s: SampleX = {
       t: tt,
       ...v,
       handSpeed: round(this.handSpeed, 3),
-      pitchHz: af?.pitchHz ? Math.round(af.pitchHz) : null,
+      // Pitch only counts when it is the speaker's own voice.
+      pitchHz: speaking && af?.pitchHz ? Math.round(af.pitchHz) : null,
       rms: af ? round(af.rms, 4) : 0,
-      speaking: af?.speaking ?? false,
+      speaking,
+      mouthMoving: mouth ?? false,
+      micVoice,
+      jawOpen: vf?.face ? round(vf.jawOpen, 3) : null,
     }
     this.legacyVision.push({ t: tt, face: v.face, eyeContact: v.gazeOnTarget, handsVisible: v.handsVisible, movement: round(movement, 3) })
     this.legacyAudio.push({ t: tt, rms: s.rms, pitchHz: s.pitchHz })

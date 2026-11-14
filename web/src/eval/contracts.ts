@@ -81,6 +81,12 @@ export type SampleX = Sample & {
   handsVisible: number
   /** Horizontal body centre (shoulder midpoint, normalised 0–1), for sway. Null without pose. */
   bodyX: number | null
+  /** The speaker's mouth is moving (jawOpen varies). `speaking` requires it whenever a face is visible. */
+  mouthMoving: boolean
+  /** Raw microphone voice activity, before the mouth gate (any voice in the room, including the panel). */
+  micVoice: boolean
+  /** Raw jawOpen blendshape (0–1), kept for tuning the mouth gate. Null without a face. */
+  jawOpen?: number | null
 }
 
 /** Baseline captured during the pre-pitch countdown. Angles in degrees. */
@@ -167,8 +173,13 @@ export interface EvaluationResult {
   finalScores: Record<ScoreCat | 'overall', number>
   /** Categories that could not be measured (their finalScores value is 0 and they are left out of overall). */
   unmeasured: ScoreCat[]
+  /** The speaker said too little for any score to mean anything. All categories are then unmeasured. */
+  insufficientSpeech: boolean
+  /** Seconds of the speaker's own speech (transcript if available, else mouth-gated voice activity). */
+  userSpeechSec: number
   timing: TimingStats
-  timingScore: number
+  /** Null when it could not be measured (no transcript, or too little speech). */
+  timingScore: number | null
   coaching: { top3: string[]; summary: string }
   segments: SegmentNote[]
   calibration: Calibration | null

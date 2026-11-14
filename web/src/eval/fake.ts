@@ -103,6 +103,9 @@ export function makeFakeData(seed = 1): FakeData {
       pitchHz: speaking && rand() > 0.3 ? Math.round(100 * 2 ** (semis / 12)) : null,
       rms: speaking ? 0.04 + rand() * 0.03 : 0.004,
       speaking,
+      mouthMoving: speaking,
+      // Room chatter: the mic hears voices at 20–30 s while the speaker is between sentences.
+      micVoice: speaking || (tt >= 20 && tt < 30),
       face: true,
       handsVisible: speaking ? 2 : 1,
       bodyX: 0.5,

@@ -15,7 +15,14 @@ export const llmRouter = Router();
 
 function client() {
   if (!env.anthropicKey) throw new Error("Anthropic is not configured");
-  return new Anthropic({ apiKey: env.anthropicKey, timeout: 100_000, maxRetries: 1 });
+  // Keys that are not scoped to a workspace must name one with this header (ANTHROPIC_WORKSPACE_ID in .env).
+  const workspace = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
+  return new Anthropic({
+    apiKey: env.anthropicKey,
+    timeout: 100_000,
+    maxRetries: 1,
+    ...(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {}),
+  });
 }
 
 async function structured<T extends z.ZodType>(schema: T, system: string, user: string, effort: "low" | "medium", timeoutMs: number) {

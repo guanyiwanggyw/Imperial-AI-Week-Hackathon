@@ -21,8 +21,17 @@ function longestRun(samples: SampleX[], pred: (s: SampleX) => boolean): number {
   return best
 }
 
-const risingEdges = (samples: SampleX[], pred: (s: SampleX) => boolean) =>
-  samples.reduce((n, s, i) => n + (pred(s) && !(i > 0 && pred(samples[i - 1])) ? 1 : 0), 0)
+/** Distinct episodes where `pred` holds: flicker within `gapSec` of the previous episode counts as the same one. */
+function episodes(samples: SampleX[], pred: (s: SampleX) => boolean, gapSec = 3): number {
+  let n = 0
+  let lastT = -Infinity
+  for (const s of samples) {
+    if (!pred(s)) continue
+    if (s.t - lastT > gapSec) n++
+    lastT = s.t
+  }
+  return n
+}
 
 // ---------- per-category scores over a set of samples / phrases ----------
 
@@ -41,13 +50,13 @@ export function bodyScore(samples: SampleX[]): number | null {
   if (present.length < 5) return null
   const openShare = present.filter((s) => s.armsOpen).length / present.length
   const minutes = Math.max((present[present.length - 1].t - present[0].t) / 60, 1 / 6)
-  const touchesPerMin = risingEdges(present, (s) => s.faceTouch) / minutes
+  const touchesPerMin = episodes(present, (s) => s.faceTouch) / minutes
   const slouch = mean(present.map((s) => s.slouch))
   const speaking = present.filter((s) => s.speaking)
   const hand = speaking.length ? mean(speaking.map((s) => s.handSpeed)) : null
   const smile = mean(present.map((s) => s.smile))
   let score = 40 + 60 * clamp((openShare - 0.5) / 0.3, 0, 1)
-  score -= Math.max(0, touchesPerMin - 1) * 12
+  score -= Math.min(30, Math.max(0, touchesPerMin - 1) * 10)
   score -= slouch > T.body.slouchBad ? (slouch - T.body.slouchBad) * 100 : 0
   if (hand !== null) score -= hand < T.body.handSpeedStill ? 10 : hand > T.body.handSpeedBusy ? 15 : 0
   if (smile > 0.3) score += 5
@@ -121,14 +130,22 @@ export interface FinalScoreInput {
   segments: SegmentNote[]
   /** Claude's final coherency score (0–100), if the final judge ran. */
   claudeCoherency: number | null
-  timingScore: number
+  timingScore: number | null
+  /** Panel turns: eye contact counts while the speaker talks or is being addressed. */
+  agentTurns: { t: number; end: number }[]
+  /** Too little of the speaker's own speech: everything is unmeasured. */
+  insufficientSpeech: boolean
   /** Number of look-away events longer than the rule threshold. */
   lookAwayEvents: number
   monotoneEvents: number
 }
 
 export function computeFinalScores(i: FinalScoreInput): { scores: Record<ScoreCat | 'overall', number>; unmeasured: ScoreCat[] } {
-  const eyeBase = eyeScore(i.samples)
+  if (i.insufficientSpeech) return { scores: { eye: 0, body: 0, tone: 0, coherency: 0, overall: 0 }, unmeasured: [...SCORE_CATS] }
+  // Eye contact matters while you speak and while you are being asked something, not while standing silent.
+  const addressed = (t: number) => i.agentTurns.some((a) => t >= a.t && t <= a.end + 2)
+  const engaged = i.samples.filter((s) => s.speaking || addressed(s.t))
+  const eyeBase = eyeScore(engaged.length >= 5 * 7 ? engaged : i.samples)
   const eye = eyeBase === null ? null : clamp(eyeBase - Math.min(20, i.lookAwayEvents * 2))
   const body = bodyScore(i.samples)
   const toneBase = toneScore(i.samples, i.phrases, 0, i.duration)
@@ -141,8 +158,8 @@ export function computeFinalScores(i: FinalScoreInput): { scores: Record<ScoreCa
   const parts: Record<ScoreCat, number | null> = { eye, body, tone, coherency }
   const unmeasured = SCORE_CATS.filter((c) => parts[c] === null)
   const w = T.overallWeights
-  let total = w.timing * i.timingScore
-  let weight = w.timing
+  let total = i.timingScore === null ? 0 : w.timing * i.timingScore
+  let weight = i.timingScore === null ? 0 : w.timing
   for (const c of SCORE_CATS) {
     if (parts[c] === null) continue
     total += w[c] * parts[c]!
@@ -153,7 +170,7 @@ export function computeFinalScores(i: FinalScoreInput): { scores: Record<ScoreCa
     body: Math.round(body ?? 0),
     tone: Math.round(tone ?? 0),
     coherency: Math.round(coherency ?? 0),
-    overall: Math.round(total / weight),
+    overall: weight > 0 ? Math.round(total / weight) : 0,
   }
   return { scores, unmeasured }
 }

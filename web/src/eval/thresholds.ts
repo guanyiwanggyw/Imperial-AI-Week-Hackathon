@@ -22,12 +22,23 @@ export const T = {
     faceTouchMargin: 0.1,
   },
 
+  /** Below this much of the speaker's own speech (seconds) nothing is scored. */
+  minSpeechSec: 10,
+
   voice: {
     /** RMS needed to count as speech, at minimum. The live threshold adapts to the noise floor. */
     minSpeechRms: 0.015,
     noiseMultiplier: 3,
     /** Seconds of quiet before `speaking` turns off (hangover). */
     speakingHangSec: 0.3,
+    /**
+     * Mouth gate. Over the last second, jawOpen must vary by more than `mouthMoveMin` AND open more than `mouthOpenMin`
+     * above the speaker's resting level (20th percentile over 10 s). Model jitter and head turns stay under both.
+     */
+    mouthMoveMin: 0.08,
+    mouthOpenMin: 0.08,
+    /** If a face was seen this recently, a missing face means "can't tell" (turned away, hand over mouth): not speaking. */
+    faceRecentSec: 10,
     /** Pitch spread (semitones, trimmed std) below this over 20 s counts as monotone. */
     monotoneSemitones: 1.5,
     expressiveSemitones: 3.5,

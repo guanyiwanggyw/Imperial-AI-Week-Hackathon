@@ -52,7 +52,7 @@ export class EvalSession {
 
   constructor(opts: EvalSessionOptions) {
     this.opts = opts
-    this.sampler = new SignalSampler(this.vision, this.audio)
+    this.sampler = new SignalSampler(this.vision, this.audio, () => this.openTurn !== null)
     this.transcript = new LiveTranscript(
       () => opts.onUpdate?.(),
       (p) => opts.onPhrase?.(p),

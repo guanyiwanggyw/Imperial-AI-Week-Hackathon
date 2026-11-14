@@ -84,10 +84,20 @@ export interface VisionFrame {
   pitch: number
   eyeLook: Record<string, number>
   smile: number
+  /** jawOpen blendshape, 0–1, for the mouth-movement speech gate. */
+  jawOpen: number
   faceTouch: boolean
   /** Hand landmarker wrists (more reliable than pose wrists when hands are raised). */
   wrists: Point[]
   pose: PosePoints | null
+  /** Raw landmarks of this frame, for drawing (TrackingOverlay). Pose is carried over on frames where it is skipped. */
+  raw: RawLandmarks
+}
+
+export interface RawLandmarks {
+  face: NormalizedLandmark[] | null
+  hands: NormalizedLandmark[][]
+  pose: NormalizedLandmark[] | null
 }
 
 const EYE_LOOK = ['eyeLookInLeft', 'eyeLookOutLeft', 'eyeLookUpLeft', 'eyeLookDownLeft', 'eyeLookInRight', 'eyeLookOutRight', 'eyeLookUpRight', 'eyeLookDownRight']
@@ -136,12 +146,16 @@ export class VisionTracker {
   error: string | null = null
   private timer: number | undefined
   private tick = 0
+  /** Bumped by start() and stop(), so a start whose model load finishes after a stop (React StrictMode) does nothing. */
+  private generation = 0
 
-  /** Starts analysing ~7 frames a second. Safe to call once; later calls are ignored. */
+  /** Starts analysing ~7 frames a second. Calling it while running is a no-op; it can be restarted after stop(). */
   async start(video: HTMLVideoElement) {
-    if (this.timer !== undefined || this.ready) return
+    if (this.timer !== undefined) return
+    const gen = ++this.generation
     try {
       const { face, hand, pose } = await loadVision()
+      if (gen !== this.generation) return
       this.ready = true
       let lastTs = 0
       this.timer = window.setInterval(() => {
@@ -179,9 +193,11 @@ export class VisionTracker {
           pitch: angles.pitch,
           eyeLook: Object.fromEntries(EYE_LOOK.map((k) => [k, score(k)])),
           smile: (score('mouthSmileLeft') + score('mouthSmileRight')) / 2,
+          jawOpen: score('jawOpen'),
           faceTouch: lm ? touchesFace(lm, h.landmarks) : false,
           wrists: h.landmarks.map((hl) => ({ x: hl[0].x, y: hl[0].y })),
           pose: posePoints,
+          raw: { face: lm ?? null, hands: h.landmarks, pose: p ? (pl ?? null) : (this.latest?.raw.pose ?? null) },
         }
       }, Math.round(1000 / T.sampleHz))
     } catch (err) {
@@ -190,6 +206,7 @@ export class VisionTracker {
   }
 
   stop() {
+    this.generation++
     window.clearInterval(this.timer)
     this.timer = undefined
   }

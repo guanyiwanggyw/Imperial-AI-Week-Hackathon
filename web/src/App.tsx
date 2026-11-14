@@ -3,6 +3,7 @@ import { getJson, getStatus, type Status } from './api'
 import { Report } from './components/Report'
 import { Session } from './components/Session'
 import { Setup } from './components/Setup'
+import { TrackingDebug } from './eval/debug/TrackingDebug'
 import { loadVision } from './eval/signals/vision'
 import type { SessionConfig, SessionData } from './types'
 
@@ -12,6 +13,7 @@ type View =
   | { name: 'report'; session: SessionData; localRecording: string | null }
   | { name: 'loading' }
   | { name: 'missing' }
+  | { name: 'eval-debug' }
 
 const reportHash = (id: string) => `#/report/${id}`
 
@@ -30,6 +32,8 @@ export default function App() {
   // Reports have their own URL so a past session can be opened directly (useful as a demo backup).
   useEffect(() => {
     const open = () => {
+      // Tracking debug page (evaluation workstream): webcam with MediaPipe landmarks and live readings.
+      if (location.hash === '#/eval-debug') return setView({ name: 'eval-debug' })
       const match = location.hash.match(/^#\/report\/([\w-]+)/)
       if (!match) return
       setView({ name: 'loading' })
@@ -93,6 +97,20 @@ export default function App() {
         session={view.session}
         localRecording={view.localRecording}
         onNew={() => {
+          history.replaceState(null, '', location.pathname)
+          setView({ name: 'setup' })
+        }}
+      />
+    )
+  }
+
+  if (view.name === 'eval-debug') {
+    return (
+      <TrackingDebug
+        stream={stream}
+        streamError={streamError}
+        onRequestMedia={requestMedia}
+        onBack={() => {
           history.replaceState(null, '', location.pathname)
           setView({ name: 'setup' })
         }}

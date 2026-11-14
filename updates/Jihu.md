@@ -7,6 +7,70 @@
 
 ## Log
 
+### 2026-11-14: optional Anthropic workspace header
+
+- Claude calls failed with `400 … API key is not scoped to a workspace … must include the anthropic-workspace-id header`.
+- If `ANTHROPIC_WORKSPACE_ID` is set in `.env`, it is now sent as the `anthropic-workspace-id` header by both Anthropic clients:
+  - `server/src/eval/judge.ts` (mine)
+  - `server/src/llm.ts` (shared: the `/questions` route hit the same error; only the client constructor changed)
+- Added to `.env.example`. With the variable unset, nothing changes.
+
+### 2026-11-14: fix round 2: mouth gate too loose, Body 0, contradictory tip
+
+- **The 17:44 session still scored Tone 100.**
+  - The mouth gate (jaw range > 0.04 over 0.7s) passed on 50% of frames, from model jitter, head turns and face touches.
+  - 101 frames with no face (turned away, hand over face) fell back to mic-only.
+  - Together that made 32s of "speech".
+- **Mouth gate (`signals/sampler.ts`):**
+  - Over 1s, jaw range must be > `mouthMoveMin` (0.08) **and** jaw opening must be > `mouthOpenMin` (0.08) above the speaker's resting level (20th percentile over 10s).
+  - If a face was seen in the last 10s, a missing face counts as "not speaking". Mic-only fallback applies only when no face has been seen recently (camera off).
+  - Samples now store the raw `jawOpen`, so the gate can be tuned and re-applied offline.
+- **Body 0:** face-touch flicker counted as many touches. Touches are now counted as episodes (3s gap), and the penalty is capped at 30. Re-scored, that session's body goes from 0 to 55.
+- **"What to work on":** the fallback tips (no Claude) are now built from the measured category scores under 70, each with a matching tip and a jump to its worst event. Before, they came from the old delivery notes and could say "Good connection" for a weak score.
+- Fixed the ".." in the content notice. The debug page shows "Jaw open (raw)".
+- **Not yet tuned on a real face:** the mouth thresholds still need a calibration recording (silent, then talking).
+
+### 2026-11-14: fix: silent sessions got high scores (room voices counted as the speaker)
+
+- **Cause:** a 77-second session with no words spoken scored Tone 95, Tonality 100, Eye 79 and Gestures 90. During the pitch, before any panel line, the mic marked "speaking" in 325 of 538 frames. Background voices in the room were taken as the speaker. With no transcript there was nothing to cross-check, and eye, body and timing were scored even though the speaker never spoke.
+- **Mouth gate (`signals/sampler.ts`, `signals/vision.ts`):** voice activity counts as the speaker only when their mouth is moving (`jawOpen` range over 0.7s > `T.voice.mouthMoveMin`). Pitch is kept only for the speaker's own voice. With no face visible it falls back to the mic, except while a panel voice is playing. New `SampleX` fields: `mouthMoving` and `micVoice` (raw mic activity).
+- **Panel leakage (`assemble.ts`):** transcript lines heard during a panel line are dropped unless the speaker's mouth moved. This addresses Guanyi's note about panel audio being transcribed. I chose this over muting the transcriber, so talk-over can still be measured.
+- **Speech gate:**
+  - With under `T.minSpeechSec` (10s) of the speaker's own speech, all categories are unmeasured, timing is null, `scoreSeries` is empty, Claude isn't called, and the old per-signal bars show "Not scored".
+  - New `EvaluationResult` fields: `insufficientSpeech` and `userSpeechSec`.
+  - `timingScore` is now `number | null`; it's null without a transcript.
+- **Eye contact** is scored while the speaker talks or is being addressed (panel turn + 2s), not while standing silent.
+- **Report (`Report.tsx`):**
+  - Unmeasured categories show "–" (not "Coherency 0").
+  - The "not enough speech" notice says how much speech was heard.
+  - The content notice gives the real reason ("Claude is not configured…"), not "Skipped".
+- **Old sessions:** samples saved before this fix (with no `mouthMoving` field) don't count as evidence of speech when re-scored.
+- **Debug page:** shows "Mic hears a voice", "Mouth moving" and "Speaking (you)".
+- **Verified:**
+  - A normal fake pitch still scores (overall 86).
+  - A silent speaker in a loud room gets nothing scored, timing "–", and no series.
+  - A leaked panel line is dropped while all real lines are kept.
+  - The three real silent sessions now re-score as unmeasured.
+  - Web, server and CLI typecheck, and the build passes.
+- **Pulled** Guanyi's "live caption" (4d5a406) first. It doesn't touch my files.
+
+### 2026-11-14: tracking debug page with MediaPipe visualisation
+
+- **New page at `/#/eval-debug`:** the webcam with face, hand and body landmarks drawn on top, colour-coded by the evaluation's reading:
+  - face outline green or red = gaze on or off target
+  - hands amber = touching the face
+  - forearms red = arms crossed
+  - shoulder line amber = slouching
+
+  Next to it are live readings: eye contact, body language, voice, RoomState, rolling 10-second scores, and rule events as they fire. There is a 5-second calibrate button and layer toggles. No keys are needed, and nothing is recorded.
+- **New files:**
+  - `web/src/eval/debug/TrackingOverlay.tsx`: a reusable canvas overlay for any `<video>` with a `VisionTracker`. It could go on the self-view or in the playback screen.
+  - `web/src/eval/debug/TrackingDebug.tsx`: the page.
+- **`web/src/eval/signals/vision.ts`:** each frame now keeps its raw landmarks (`raw`) for drawing.
+- **Fix in `vision.ts`, which also affects the practice session in development:** under React StrictMode, a start, stop, start sequence ran two detection loops, and the first was never cleared. A generation counter now cancels starts that were superseded.
+- **Shared file:** `web/src/App.tsx` gets one route (`#/eval-debug`). Nothing else changed.
+- **Verified:** headless Chrome with a fake camera. The page renders, the camera starts, the canvas sizes to the video (1280×720), readings update, and there are no runtime errors. Not yet tried with a real face.
+
 ### 2026-11-14: merged Guanyi's "one avatar" (77f8a50) into `jihu/evaluation-engine`
 
 - I read `updates/Guanyi.md` first.

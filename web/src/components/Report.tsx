@@ -120,7 +120,10 @@ export function Report({ session, localRecording, onNew }: Props) {
           <span className="out">out of 100</span>
           <span className="faint" style={{ marginTop: 8 }}>
             {ev
-              ? `Eye ${ev.finalScores.eye} · Body ${ev.finalScores.body} · Tone ${ev.finalScores.tone} · Coherency ${ev.finalScores.coherency} · Timing ${ev.timingScore}`
+              ? (['eye', 'body', 'tone', 'coherency'] as const)
+                  .map((c) => `${c[0].toUpperCase()}${c.slice(1)} ${ev.unmeasured.includes(c) ? '–' : ev.finalScores[c]}`)
+                  .concat(`Timing ${ev.timingScore ?? '–'}`)
+                  .join(' · ')
               : report.contentScore !== null && report.deliveryScore !== null
                 ? `Content ${Math.round(report.contentWeight * 100)}%, delivery ${Math.round((1 - report.contentWeight) * 100)}%`
                 : report.contentScore === null
@@ -130,9 +133,11 @@ export function Report({ session, localRecording, onNew }: Props) {
         </div>
         <div className="stack">
           {report.insufficientSpeech && (
-            <div className="notice">Not enough speech was captured to score this session. Check that the transcript service is configured and speak for at least 20 seconds.</div>
+            <div className="notice">
+              {ev?.coaching.summary ?? 'Not enough speech was captured to score this session. Check that the transcript service is configured and speak for at least 20 seconds.'}
+            </div>
           )}
-          {report.content ? <p>{report.content.summary}</p> : <div className="notice">Content evaluation unavailable{report.contentError ? `: ${report.contentError}` : ''}. The score uses delivery only.</div>}
+          {report.content ? <p>{report.content.summary}</p> : report.insufficientSpeech ? null : <div className="notice">Content evaluation unavailable{report.contentError ? `: ${report.contentError}` : ''}. The score uses delivery only.</div>}
           <div className="components">
             <div className="stack" style={{ gap: 8 }}>
               <ScoreBar label="Content" score={report.contentScore} k={k} />

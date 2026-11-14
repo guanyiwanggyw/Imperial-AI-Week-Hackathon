@@ -23,7 +23,14 @@ const FINAL_MODEL = process.env.EVAL_FINAL_MODEL?.trim() || "claude-sonnet-5-5";
 
 function client() {
   if (!env.anthropicKey) throw new Error("Anthropic is not configured");
-  return new Anthropic({ apiKey: env.anthropicKey, timeout: 100_000, maxRetries: 1 });
+  // Keys that are not scoped to a workspace must name one with this header (ANTHROPIC_WORKSPACE_ID in .env).
+  const workspace = process.env.ANTHROPIC_WORKSPACE_ID?.trim();
+  return new Anthropic({
+    apiKey: env.anthropicKey,
+    timeout: 100_000,
+    maxRetries: 1,
+    ...(workspace ? { defaultHeaders: { "anthropic-workspace-id": workspace } } : {}),
+  });
 }
 
 // Fixed rubric: identical bytes on every request so it is cached (render order: system before messages).
