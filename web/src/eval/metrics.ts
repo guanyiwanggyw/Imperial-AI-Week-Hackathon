@@ -62,7 +62,7 @@ const semitones = (hz: number) => 12 * Math.log2(hz / 100)
 /** Pitch spread in semitones among voiced samples. Null if too little voice to judge. */
 export function pitchSpread(audio: AudioSample[], from: number, to: number): number | null {
   const voiced = audio.filter((a) => a.t >= from && a.t < to && a.pitchHz !== null).map((a) => semitones(a.pitchHz!))
-  if (voiced.length < 15) return null
+  if (voiced.length < T.minVoicedSamples) return null
   // Trim the outer 10 % to ignore octave errors from the pitch tracker.
   voiced.sort((a, b) => a - b)
   const cut = Math.floor(voiced.length * 0.1)

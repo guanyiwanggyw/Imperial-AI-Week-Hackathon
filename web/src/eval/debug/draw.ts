@@ -92,7 +92,7 @@ export function drawTracking(
   ctx: CanvasRenderingContext2D,
   pts: TrackingPoints,
   box: Box,
-  sample: Pick<SampleX, 'gazeOnTarget' | 'armsOpen' | 'faceTouch' | 'slouch'> | null,
+  sample: Pick<SampleX, 'gazeOnTarget' | 'armsOpen' | 'faceTouch' | 'slouch' | 'gazeYaw' | 'gazePitch' | 'shoulderTilt'> | null,
   layers: Layers,
   colors: Palette,
 ) {
@@ -104,7 +104,7 @@ export function drawTracking(
     lines(ctx, pts.pose, POSE_CONNS, box, ({ start, end }) => {
       const key = `${start}-${end}`
       if (sample && !sample.armsOpen && FOREARMS.has(key)) return colors.bad
-      if (sample && sample.slouch > T.body.slouchBad && SHOULDERS.has(key)) return colors.warn
+      if (sample && (sample.slouch > T.body.slouchBad || (sample.shoulderTilt ?? 0) > T.body.tiltBad) && SHOULDERS.has(key)) return colors.warn
       return colors.accent
     })
     dots(ctx, pts.pose, POSE_IDX, box, lw * 2.2, colors.accent)
@@ -126,7 +126,53 @@ export function drawTracking(
     lines(ctx, pts.face, FACE_CONNS, box, () => faceColor)
     ctx.globalAlpha = 1
     lines(ctx, pts.face, IRIS_CONNS, box, () => '#ffffff')
+    if (sample?.gazeYaw != null && sample.gazePitch != null) drawGaze(ctx, pts.face, box, sample.gazeYaw, sample.gazePitch, sample.gazeOnTarget ? colors.good : colors.bad, lw)
   }
+}
+
+const IRIS_RINGS = [
+  [469, 470, 471, 472],
+  [474, 475, 476, 477],
+]
+
+/**
+ * Gaze arrow from between the eyes. Its direction and length show how far the combined head + eye gaze is from
+ * the calibrated target: a dot when on target, a longer arrow the further away the eyes point.
+ */
+function drawGaze(ctx: CanvasRenderingContext2D, face: Pt, box: Box, yaw: number, pitch: number, color: string, lw: number) {
+  const centres = IRIS_RINGS.map((ring) => {
+    const ps = ring.map(face).filter((p): p is { x: number; y: number } => p !== null)
+    return ps.length ? { x: ps.reduce((a, p) => a + p.x, 0) / ps.length, y: ps.reduce((a, p) => a + p.y, 0) / ps.length } : null
+  })
+  if (!centres[0] || !centres[1]) return
+  const x0 = box.x + ((centres[0].x + centres[1].x) / 2) * box.w
+  const y0 = box.y + ((centres[0].y + centres[1].y) / 2) * box.h
+  const span = Math.hypot((centres[0].x - centres[1].x) * box.w, (centres[0].y - centres[1].y) * box.h)
+  const rad = (d: number) => (d * Math.PI) / 180
+  const len = span * 4
+  const x1 = x0 + Math.sin(rad(Math.max(-60, Math.min(60, yaw)))) * len
+  const y1 = y0 + Math.sin(rad(Math.max(-60, Math.min(60, pitch)))) * len
+  ctx.strokeStyle = color
+  ctx.fillStyle = color
+  ctx.lineWidth = lw * 1.6
+  if (Math.hypot(x1 - x0, y1 - y0) < span * 0.4) {
+    ctx.beginPath()
+    ctx.arc(x0, y0, lw * 2.5, 0, Math.PI * 2)
+    ctx.fill()
+    return
+  }
+  ctx.beginPath()
+  ctx.moveTo(x0, y0)
+  ctx.lineTo(x1, y1)
+  ctx.stroke()
+  const a = Math.atan2(y1 - y0, x1 - x0)
+  const head = lw * 6
+  ctx.beginPath()
+  ctx.moveTo(x1, y1)
+  ctx.lineTo(x1 - head * Math.cos(a - 0.45), y1 - head * Math.sin(a - 0.45))
+  ctx.lineTo(x1 - head * Math.cos(a + 0.45), y1 - head * Math.sin(a + 0.45))
+  ctx.closePath()
+  ctx.fill()
 }
 
 /** The rectangle a video picture occupies inside an element of size (cw, ch) with object-fit: contain or cover. */

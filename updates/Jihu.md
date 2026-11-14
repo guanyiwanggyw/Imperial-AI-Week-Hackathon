@@ -7,6 +7,63 @@
 
 ## Log
 
+### 2026-11-14: fix: Pace 100 and Tonality 100 after barely speaking (interactive session)
+
+- **What happened in session `20261114200812-48vb`:**
+  - The transcript had 155 words, but most were the panel's lines (transcribed through the speakers, often committed a second late) and other people in the room. The speaker actually talked for about 5s.
+  - The six report bars used the old formulas on all those words: Pace 100.
+  - Tonality judged 18 voiced frames (about 2.5s): 100.
+- **Mouth gate tuned on that session's raw jaw data:** the speaker's phrases reached a jaw range of 0.05–0.24, while silence and panel audio stayed under 0.045. `mouthMoveMin` is now 0.05 and `mouthOpenMin` 0.04 (0.08 was rejecting half the real speech).
+- **Speaker attribution (`assemble.ts`, `attributeToSpeaker`, replaces `dropPanelLeakage`):** a phrase is dropped if:
+  - its words repeat a panel line spoken in the last few seconds (echo), or
+  - the face was visible and the jaw barely moved, or
+  - it starts during, or within 1s after, a panel line without clear jaw movement.
+- **Minimum evidence (`thresholds.ts`):** pitch variety needs 40 voiced samples (about 6s; it was 15). Pace, fillers and pauses need 25 of the speaker's own words.
+- **Pace (`rules.ts`):**
+  - `wpmIn` now counts short pauses (under 2s) between phrases. Raw phrase time alone gave 219 wpm for normal speech.
+  - New `sustainedWpm`: pace only from runs of at least 8s of continuous talking, and at least 15s in total. Short bursts don't count.
+- **The six report bars (`evaluate.ts`, `deliveryBars`) now use only the speaker's attributed words:**
+  - Pace: sustained speech.
+  - Pauses: ignore gaps while the panel talks and gaps over 6s.
+  - Eye contact = the evaluation's eye score. Gestures = `bodyBreakdown.gestures`.
+  - Tonality: gated pitch, at least 6s of voice.
+  - So the bars can no longer contradict the category scores.
+- **Coherency is unmeasured without Claude.** Fillers alone can't judge structure, and they have their own bar.
+- **Accurate transcript detection** now compares content, not object identity (identity broke after a reload).
+- **Verified:** re-scoring that session offline (with the new gate applied to its stored jaw readings):
+  - the echoed panel line is dropped and 9 of 12 phrases are kept
+  - Pace and Tonality "–", Eye 52, Body 70, Timing 76, Overall 66
+  - the newer near-silent session is "Not scored"
+  - the fake pitch still scores
+  - Web, server and CLI typecheck, and the build passes
+
+### 2026-11-14: real eye gaze and six-part body language (research-based)
+
+- **Eye gaze (`signals/vision.ts`, `signals/sampler.ts`, `calibration.ts`):**
+  - Eye-in-head angle comes from where each iris sits between the eye corners and lids: `asin(2.5 × offset / eye width)`. The vertical angle is blended 50/50 with the eyeLookUp/Down blendshapes, and the last reading is held during blinks.
+  - Head angles are signed in image terms. The transform matrix's sign is aligned automatically against a nose-offset estimate.
+  - On target = combined gaze (head + eyes) within ±12° left/right and ±14° up/down of calibration, with the head itself within 35°/30°. Turning your head while your eyes stay on the panel now counts. Looking at notes with the head still no longer counts.
+  - New `SampleX` fields: `gazeYaw`, `gazePitch`, `eyeYaw`, `eyePitch`. Calibration records `gazeYaw0`, `gazePitch0` and `facing0`.
+  - A gaze arrow is drawn on the debug page and in playback: a dot when on target, a longer arrow the further away the eyes point.
+- **Body language (`scores.ts`):** `bodyBreakdown()` has six parts, following the Tübingen presentation rubric (posture, gestures, facial expression) and coaches' criteria (self-touch, purposeful movement). Each is 0–100 or null. Weights are in `T.body.weights`.
+  - posture 25%: slouch, shoulder tilt, torso facing the panel
+  - openness 15%: arms not crossed, hands not hidden (only judged when the waist is in frame)
+  - gestures 25%: share of speaking time gesturing in the natural speed band (30–70% ideal), minus frantic movement. Null in a head-and-shoulders shot.
+  - self-touch 15%: face touches per minute, fidgeting (hands together and moving)
+  - movement 10%: side-to-side sway in shoulder widths
+  - expression 10%: smiling share and eyebrow movement
+  - Each body warning also costs 3 points, up to 20, so short problems don't average away.
+  - New fields: `shoulderTilt`, `shoulderW`, `facing`, `armSpan`, `handsTogether`, `handsHidden`, `brow`. `EvaluationResult.bodyBreakdown` holds the parts.
+- **New live rules (`rules.ts`):** shoulders tilted (8s), body turned away (5s), hands out of sight (8s), fidgeting (4s), swaying, hands still while talking (30s), and "natural, purposeful gestures" (good).
+- **Event merging** is now by kind (category + opening words), not category alone. Before, arms crossed swallowed a nearby "turned away".
+- **Claude's segment summaries** now include facing share, gesturing share and fidget frames.
+- **Debug page:** gaze (combined, eyes only, head only), posture readings, and the six body sub-scores live.
+- **Verified:**
+  - Iris geometry unit test (±30° symmetric, either corner order).
+  - Every planted fake problem fires its own event: fidget 30s, turned away 50s, arms 60s, touch 75s, sway 83s.
+  - Silent gate unchanged. Web, server and CLI typecheck, and the build passes.
+- **Not yet verified:** on a real face and body. All new thresholds are first guesses.
+
 ### 2026-11-14: face and body tracking drawn over the recording (playback only)
 
 - **During the session:** the sampler records a compact landmark track about 7 times a second (`EvaluationResult.landmarks`).

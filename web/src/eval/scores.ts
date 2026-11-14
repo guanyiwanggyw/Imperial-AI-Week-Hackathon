@@ -1,12 +1,17 @@
 // Deterministic 0–100 scores: a rolling 10 s series (one value per second) and final scores.
-import type { Phrase, SampleX, ScoreCat, SegmentNote } from './contracts'
+import type { BodyBreakdown, Phrase, SampleX, ScoreCat, SegmentNote } from './contracts'
 import { SCORE_CATS } from './contracts'
 import { paceScore, pitchSpread } from './metrics'
-import { wpmIn } from './rules'
+import { sustainedWpm, wpmIn } from './rules'
 import { T } from './thresholds'
 
 const clamp = (n: number, lo = 0, hi = 100) => Math.min(hi, Math.max(lo, n))
 const mean = (xs: number[]) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0)
+const std = (xs: number[]) => {
+  if (xs.length < 2) return 0
+  const m = mean(xs)
+  return Math.sqrt(mean(xs.map((x) => (x - m) ** 2)))
+}
 
 /** Longest continuous run (seconds) where `pred` holds. */
 function longestRun(samples: SampleX[], pred: (s: SampleX) => boolean): number {
@@ -44,29 +49,98 @@ export function eyeScore(samples: SampleX[]): number | null {
   return Math.round(clamp(20 + ((share - 0.3) / 0.6) * 80 - (lookAway > T.rules.lookAwaySec ? Math.min(20, (lookAway - T.rules.lookAwaySec) * 4) : 0)))
 }
 
-/** Body: open posture, few face touches, no slouch, natural gestures, a little smiling. */
+const share = (xs: SampleX[], pred: (s: SampleX) => boolean) => (xs.length ? xs.filter(pred).length / xs.length : 0)
+const lerp = (v: number, lo: number, hi: number) => clamp((v - lo) / (hi - lo), 0, 1)
+
+/**
+ * Body language in six parts, after the Tübingen presentation rubric (posture, gestures, facial expression) and
+ * coaches' criteria (self-touch and tics, purposeful movement instead of swaying). Each part is 0–100, or null when
+ * the camera could not see enough to judge it (for example, gestures in a head-and-shoulders shot).
+ */
+export function bodyBreakdown(samples: SampleX[]): BodyBreakdown {
+  const B = T.body
+  const faces = samples.filter((s) => s.face)
+  const posed = samples.filter((s) => s.bodyX !== null)
+  const speaking = samples.filter((s) => s.speaking)
+
+  // Posture: upright (no slouch), level shoulders, torso facing the panel.
+  let posture: number | null = null
+  if (posed.length >= 5) {
+    const slouch = mean(posed.map((s) => s.slouch))
+    const tilts = posed.map((s) => s.shoulderTilt).filter((x): x is number => x != null)
+    const tilt = tilts.length ? mean(tilts) : 0
+    const turned = share(posed.filter((s) => s.facing != null), (s) => s.facing! < B.facingMin)
+    posture = 100 - Math.max(0, slouch - B.slouchBad / 2) * 150 - Math.max(0, tilt - B.tiltOk) * 6 - turned * 60
+  }
+
+  // Openness: arms not crossed, hands not hidden.
+  let openness: number | null = null
+  if (posed.length >= 5) {
+    openness = 40 + 60 * lerp(share(posed, (s) => s.armsOpen), 0.5, 0.8) - 60 * share(posed, (s) => Boolean(s.handsHidden))
+  }
+
+  // Gestures while speaking: some of the time, in the natural speed band, not frantic.
+  let gestures: number | null = null
+  const handsSeen = speaking.filter((s) => s.handsVisible > 0 || s.armSpan != null)
+  if (speaking.length >= 5 * T.sampleHz && handsSeen.length >= speaking.length * 0.2) {
+    const active = share(handsSeen, (s) => s.handSpeed >= B.handSpeedStill && s.handSpeed <= B.handSpeedBusy)
+    const frantic = share(handsSeen, (s) => s.handSpeed > B.handSpeedBusy)
+    const [lo, hi] = B.gestureShareGood
+    const base = active < lo ? 40 + 60 * (active / lo) : active > hi ? 100 - ((active - hi) / (1 - hi)) * 30 : 100
+    gestures = base - Math.min(30, frantic * 100)
+  }
+
+  // Self-touch and fidgeting: face touches per minute, hands wringing or clasped while moving.
+  let selfTouch: number | null = null
+  if (faces.length >= 5) {
+    const minutes = Math.max((faces[faces.length - 1].t - faces[0].t) / 60, 1 / 6)
+    const touches = episodes(faces, (s) => s.faceTouch) / minutes
+    const fidget = share(faces, (s) => Boolean(s.handsTogether) && s.handSpeed > B.handSpeedStill)
+    selfTouch = 100 - Math.min(50, Math.max(0, touches - 0.5) * 20) - Math.min(40, fidget * 200)
+  }
+
+  // Movement: side-to-side sway (shoulder midpoint wobble within 4 s windows), in shoulder widths.
+  let movement: number | null = null
+  const sways: number[] = []
+  for (let i = 0; i < posed.length; ) {
+    const start = posed[i].t
+    const win: SampleX[] = []
+    while (i < posed.length && posed[i].t < start + 4) win.push(posed[i++])
+    const widths = win.map((s) => s.shoulderW).filter((x): x is number => x != null && x > 0.02)
+    if (win.length >= 10 && widths.length) sways.push(std(win.map((s) => s.bodyX!)) / mean(widths))
+  }
+  if (sways.length) movement = 100 - 70 * lerp(mean(sways), B.swayOk, B.swayBad)
+
+  // Facial expression: some smiling and eyebrow movement, not a frozen face.
+  let expression: number | null = null
+  if (faces.length >= 5) {
+    const brows = faces.map((s) => s.brow).filter((x): x is number => x != null)
+    expression = 30 + 40 * lerp(share(faces, (s) => s.smile > 0.25), 0, 0.2) + 30 * lerp(brows.length > 1 ? std(brows) : 0, 0, 0.06)
+  }
+
+  const r = (v: number | null) => (v === null ? null : Math.round(clamp(v)))
+  return { posture: r(posture), openness: r(openness), gestures: r(gestures), selfTouch: r(selfTouch), movement: r(movement), expression: r(expression) }
+}
+
+/** Body language score: weighted average of the measurable parts of bodyBreakdown. */
 export function bodyScore(samples: SampleX[]): number | null {
-  const present = samples.filter((s) => s.face)
-  if (present.length < 5) return null
-  const openShare = present.filter((s) => s.armsOpen).length / present.length
-  const minutes = Math.max((present[present.length - 1].t - present[0].t) / 60, 1 / 6)
-  const touchesPerMin = episodes(present, (s) => s.faceTouch) / minutes
-  const slouch = mean(present.map((s) => s.slouch))
-  const speaking = present.filter((s) => s.speaking)
-  const hand = speaking.length ? mean(speaking.map((s) => s.handSpeed)) : null
-  const smile = mean(present.map((s) => s.smile))
-  let score = 40 + 60 * clamp((openShare - 0.5) / 0.3, 0, 1)
-  score -= Math.min(30, Math.max(0, touchesPerMin - 1) * 10)
-  score -= slouch > T.body.slouchBad ? (slouch - T.body.slouchBad) * 100 : 0
-  if (hand !== null) score -= hand < T.body.handSpeedStill ? 10 : hand > T.body.handSpeedBusy ? 15 : 0
-  if (smile > 0.3) score += 5
-  return Math.round(clamp(score))
+  if (samples.filter((s) => s.face).length < 5) return null
+  const b = bodyBreakdown(samples)
+  let total = 0
+  let weight = 0
+  for (const [k, w] of Object.entries(T.body.weights) as [keyof BodyBreakdown, number][]) {
+    if (b[k] === null) continue
+    total += b[k]! * w
+    weight += w
+  }
+  return weight ? Math.round(total / weight) : null
 }
 
 /** Tone: pitch variety (monotone check), and pace from the transcript when available. */
 export function toneScore(samples: SampleX[], phrases: Phrase[], from: number, to: number): number | null {
   const spread = pitchSpread(samples, from, to)
-  const wpm = wpmIn(phrases, from, to)
+  // Whole-session tone uses sustained speech only; the 10 s series windows use what they have.
+  const wpm = to - from > 30 ? sustainedWpm(phrases, from, to) : wpmIn(phrases, from, to)
   if (spread === null && wpm === null) return null
   const spreadScore = spread === null ? null : clamp(((spread - 1) / (T.voice.expressiveSemitones - 1)) * 100)
   const pace = wpm === null ? null : paceScore(wpm)
@@ -79,7 +153,7 @@ export function toneScore(samples: SampleX[], phrases: Phrase[], from: number, t
 export function coherencyProxy(phrases: Phrase[], from: number, to: number): number | null {
   const inWin = phrases.filter((p) => p.end > from && p.t < to)
   const words = inWin.reduce((n, p) => n + p.text.split(/\s+/).filter(Boolean).length, 0)
-  if (words < 8) return null
+  if (words < (to - from > 30 ? T.minWords : 8)) return null
   const minutes = Math.max((to - from) / 60, 0.25)
   const fillers = inWin.reduce((n, p) => n + p.fillers.filter((f) => f >= from && f < to).length, 0)
   const perMin = fillers / minutes
@@ -138,6 +212,8 @@ export interface FinalScoreInput {
   /** Number of look-away events longer than the rule threshold. */
   lookAwayEvents: number
   monotoneEvents: number
+  /** Body-language warnings (crossed arms, fidgeting, sway, turned away, …). */
+  bodyEvents?: number
 }
 
 export function computeFinalScores(i: FinalScoreInput): { scores: Record<ScoreCat | 'overall', number>; unmeasured: ScoreCat[] } {
@@ -147,13 +223,17 @@ export function computeFinalScores(i: FinalScoreInput): { scores: Record<ScoreCa
   const engaged = i.samples.filter((s) => s.speaking || addressed(s.t))
   const eyeBase = eyeScore(engaged.length >= 5 * 7 ? engaged : i.samples)
   const eye = eyeBase === null ? null : clamp(eyeBase - Math.min(20, i.lookAwayEvents * 2))
-  const body = bodyScore(i.samples)
+  const bodyBase = bodyScore(i.samples)
+  // Short problems average away over a long session; each warning still costs a little, like look-aways do for eye.
+  const body = bodyBase === null ? null : clamp(bodyBase - Math.min(20, (i.bodyEvents ?? 0) * 3))
   const toneBase = toneScore(i.samples, i.phrases, 0, i.duration)
   const tone = toneBase === null ? null : clamp(toneBase - Math.min(20, i.monotoneEvents * 5))
   const proxy = coherencyProxy(i.phrases, 0, i.duration)
   const segScores = i.segments.map((s) => s.coherency).filter((x): x is number => x !== null)
   const claude = i.claudeCoherency ?? (segScores.length ? mean(segScores) : null)
-  const coherency = claude === null ? proxy : proxy === null ? claude : T.claudeCoherencyShare * claude + (1 - T.claudeCoherencyShare) * proxy
+  // Coherency is about structure and answering the question; fillers alone cannot judge it (they have their own bar).
+  // Without Claude it is unmeasured.
+  const coherency = claude === null ? null : proxy === null ? claude : T.claudeCoherencyShare * claude + (1 - T.claudeCoherencyShare) * proxy
 
   const parts: Record<ScoreCat, number | null> = { eye, body, tone, coherency }
   const unmeasured = SCORE_CATS.filter((c) => parts[c] === null)

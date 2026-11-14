@@ -3,7 +3,7 @@ import type { AudioSample, VisionSample } from '../../types'
 import type { Calibration, LandmarkTrack, SampleX } from '../contracts'
 import { FACE_IDX, POSE_IDX } from '../debug/draw'
 import { emptyTrack, encodeFrame } from '../landmarks'
-import { DEFAULT_CALIBRATION, headRise } from '../calibration'
+import { DEFAULT_CALIBRATION, facingRatio, headRise } from '../calibration'
 import { T } from '../thresholds'
 import type { AudioMeter } from './audio'
 import type { Point, VisionFrame, VisionTracker } from './vision'
@@ -13,28 +13,46 @@ const clamp01 = (n: number) => Math.min(1, Math.max(0, n))
 /** Frames older than this are treated as missing (camera stalled or models still loading). */
 const STALE_MS = 500
 
+type VisionPart = Omit<SampleX, 't' | 'handSpeed' | 'pitchHz' | 'rms' | 'speaking' | 'mouthMoving' | 'micVoice' | 'jawOpen'>
+
+const deg = (rad: number) => (rad * 180) / Math.PI
+
 /** Pure conversion from one vision frame (or none) to the vision half of a Sample. */
-export function visionToSample(
-  frame: VisionFrame | null,
-  cal: Calibration,
-): Pick<SampleX, 'gazeOnTarget' | 'headYaw' | 'headPitch' | 'armsOpen' | 'faceTouch' | 'slouch' | 'smile' | 'face' | 'handsVisible' | 'bodyX'> {
+export function visionToSample(frame: VisionFrame | null, cal: Calibration): VisionPart {
   if (!frame) {
     return { gazeOnTarget: false, headYaw: 0, headPitch: 0, armsOpen: true, faceTouch: false, slouch: 0, smile: 0, face: false, handsVisible: 0, bodyX: null }
   }
   const headYaw = frame.yaw - cal.yaw0
   const headPitch = frame.pitch - cal.pitch0
-  const eyeRise = Math.max(0, ...Object.entries(frame.eyeLook).map(([k, v]) => v - (cal.eyeLook0[k] ?? 0)))
+  // Where the eyes actually point: head angle plus eye-in-head angle, relative to looking at the target.
+  const gazeYaw = frame.yaw + (frame.eyeYaw ?? 0) - (cal.gazeYaw0 ?? cal.yaw0)
+  const gazePitch = frame.pitch + (frame.eyePitch ?? 0) - (cal.gazePitch0 ?? cal.pitch0)
   const gazeOnTarget =
-    frame.face && Math.abs(headYaw) < T.gaze.maxYawDeg && Math.abs(headPitch) < T.gaze.maxPitchDeg && eyeRise < T.gaze.maxEyeLookRise
+    frame.face &&
+    Math.abs(gazeYaw) < T.gaze.maxGazeYawDeg &&
+    Math.abs(gazePitch) < T.gaze.maxGazePitchDeg &&
+    Math.abs(headYaw) < T.gaze.maxHeadYawDeg &&
+    Math.abs(headPitch) < T.gaze.maxHeadPitchDeg
 
   let armsOpen = true
   let slouch = 0
   let bodyX: number | null = null
+  let shoulderTilt: number | null = null
+  let facing: number | null = null
+  let armSpan: number | null = null
+  let handsTogether = false
+  let handsHidden = false
   const p = frame.pose
   if (p) {
+    const a = frame.aspect
     const midX = (p.leftShoulder.x + p.rightShoulder.x) / 2
     const shoulderY = (p.leftShoulder.y + p.rightShoulder.y) / 2
+    const sw = Math.hypot((p.leftShoulder.x - p.rightShoulder.x) * a, p.leftShoulder.y - p.rightShoulder.y) || 0.2
     bodyX = midX
+    const tilt = Math.abs(deg(Math.atan2(p.leftShoulder.y - p.rightShoulder.y, Math.abs(p.leftShoulder.x - p.rightShoulder.x) * a)))
+    shoulderTilt = tilt
+    const ratio = facingRatio(frame)
+    if (ratio !== null && cal.facing0) facing = Math.min(1.5, ratio / cal.facing0)
     const lw = p.leftWrist
     const rw = p.rightWrist
     // Crossed: each wrist is on the opposite side of the body midline from its own shoulder, below the shoulders.
@@ -43,6 +61,14 @@ export function visionToSample(
       const rightCrossed = (rw.x - midX) * (p.rightShoulder.x - midX) < 0
       armsOpen = !(leftCrossed && rightCrossed)
     }
+    // Both wrists: pose wrists if visible, else the hand model's two wrists.
+    const pair = lw && rw ? [lw, rw] : frame.wrists.length === 2 ? frame.wrists : null
+    if (pair) {
+      armSpan = Math.hypot((pair[0].x - pair[1].x) * a, pair[0].y - pair[1].y) / sw
+      handsTogether = armSpan < T.body.handsTogether
+    }
+    // Only judge hidden hands when the waist is in frame; a head-and-shoulders shot never shows them.
+    handsHidden = Boolean(p.leftHip || p.rightHip) && !lw && !rw && frame.wrists.length === 0
     const hr = headRise(frame)
     if (hr && cal.headRise0) slouch = clamp01((cal.headRise0 - hr.rise) / cal.headRise0)
   }
@@ -51,13 +77,24 @@ export function visionToSample(
     gazeOnTarget,
     headYaw: round(headYaw, 1),
     headPitch: round(headPitch, 1),
+    gazeYaw: frame.face ? round(gazeYaw, 1) : null,
+    gazePitch: frame.face ? round(gazePitch, 1) : null,
+    eyeYaw: frame.eyeYaw === null ? null : round(frame.eyeYaw, 1),
+    eyePitch: frame.eyePitch === null ? null : round(frame.eyePitch, 1),
     armsOpen,
     faceTouch: frame.faceTouch,
     slouch: round(slouch),
     smile: round(frame.smile),
+    brow: frame.face ? round(frame.brow, 3) : null,
     face: frame.face,
     handsVisible: frame.wrists.length,
     bodyX: bodyX === null ? null : round(bodyX, 3),
+    shoulderTilt: shoulderTilt === null ? null : round(shoulderTilt, 1),
+    shoulderW: p ? round(Math.abs(p.leftShoulder.x - p.rightShoulder.x), 3) : null,
+    facing: facing === null ? null : round(facing),
+    armSpan: armSpan === null ? null : round(armSpan),
+    handsTogether,
+    handsHidden,
   }
 }
 

@@ -10,13 +10,20 @@ const fmt = (sec: number) => `${r1(sec)}s`
 
 type Draft = Omit<FeedbackEvent, 'source'>
 
-/** Adds an event, merging it into the previous event of the same category if they overlap or are close. */
+/** What kind of problem an event is: same category and same opening words ("Arms crossed…", "Swaying…"). */
+const kindOf = (e: FeedbackEvent) => `${e.cat}:${e.msg.split(/\s+/).slice(0, 2).join(' ').replace(/[^a-z ]/gi, '').toLowerCase()}`
+
+/**
+ * Adds an event, merging it into the previous event of the same kind if they overlap or are close
+ * (so one long look-away stays one marker, but arms crossed and turned away stay separate).
+ */
 export function mergeInto(events: FeedbackEvent[], ev: FeedbackEvent, gap = T.rules.minGapSec): { event: FeedbackEvent; merged: boolean } {
+  const kind = kindOf(ev)
   for (let i = events.length - 1; i >= 0; i--) {
     const e = events[i]
     if ((e.end ?? e.t) < ev.t - gap - 30) break
     const samePolarity = (e.severity === 'good') === (ev.severity === 'good')
-    if (e.cat !== ev.cat || e.source !== ev.source || !samePolarity) continue
+    if (e.source !== ev.source || !samePolarity || kindOf(e) !== kind) continue
     if ((e.end ?? e.t) >= ev.t - gap) {
       e.end = Math.max(e.end ?? e.t, ev.end ?? ev.t)
       if (RANK[ev.severity] > RANK[e.severity]) {
@@ -30,13 +37,44 @@ export function mergeInto(events: FeedbackEvent[], ev: FeedbackEvent, gap = T.ru
   return { event: ev, merged: false }
 }
 
-/** Words per minute over phrases overlapping [from, to]. */
-export function wpmIn(phrases: Phrase[], from: number, to: number): number | null {
+/**
+ * Speaking rate (words per minute) over phrases inside [from, to]. Counts the short pauses between phrases (under 2 s)
+ * as speaking time, like the usual 130–160 wpm targets do, but not long gaps or turns. Null with fewer than `minWords`.
+ */
+export function wpmIn(phrases: Phrase[], from: number, to: number, minWords = 12): number | null {
   const inWin = phrases.filter((p) => p.t >= from && p.end <= to)
   const words = inWin.reduce((n, p) => n + p.text.split(/\s+/).filter(Boolean).length, 0)
-  const talk = inWin.reduce((s, p) => s + (p.end - p.t), 0)
-  if (words < 12 || talk < 5) return null
+  let talk = inWin.reduce((s, p) => s + (p.end - p.t), 0)
+  for (let i = 1; i < inWin.length; i++) {
+    const gap = inWin[i].t - inWin[i - 1].end
+    if (gap > 0 && gap < 2) talk += gap
+  }
+  if (words < minWords || talk < 5) return null
   return (words / talk) * 60
+}
+
+/**
+ * Pace over sustained speech only: runs of phrases joined by gaps under 2 s that last at least `minRunSec`.
+ * Short bursts and exclamations are always fast and say nothing about pitch pace. Null below `minTotalSec` of runs.
+ */
+export function sustainedWpm(phrases: Phrase[], from: number, to: number, minRunSec = 8, minTotalSec = 15): number | null {
+  const inWin = phrases.filter((p) => p.t >= from && p.end <= to)
+  let words = 0
+  let talk = 0
+  let run: Phrase[] = []
+  const flush = () => {
+    if (run.length && run[run.length - 1].end - run[0].t >= minRunSec) {
+      words += run.reduce((n, p) => n + p.text.split(/\s+/).filter(Boolean).length, 0)
+      talk += run[run.length - 1].end - run[0].t
+    }
+    run = []
+  }
+  for (const p of inWin) {
+    if (run.length && p.t - run[run.length - 1].end >= 2) flush()
+    run.push(p)
+  }
+  flush()
+  return talk >= minTotalSec ? (words / talk) * 60 : null
 }
 
 export class RuleEngine {
@@ -93,7 +131,7 @@ export class RuleEngine {
   onSample(s: SampleX) {
     const t = s.t
     this.recent.push(s)
-    if (this.recent.length > T.sampleHz * 30) this.recent.splice(0, this.recent.length - T.sampleHz * 30)
+    if (this.recent.length > T.sampleHz * 40) this.recent.splice(0, this.recent.length - T.sampleHz * 40)
     if (s.face) this.lastFaceT = t
     // A missing face counts as looking away only if we saw a face recently (otherwise the camera is off).
     const away = s.face ? !s.gazeOnTarget : t - this.lastFaceT < 10
@@ -104,6 +142,10 @@ export class RuleEngine {
     }))
     this.streak('arms', s.face && !s.armsOpen, t, T.rules.armsCrossedSec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Arms crossed for ${fmt(dur)}` }))
     this.streak('slouch', s.slouch > T.body.slouchBad, t, T.rules.slouchSec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Slouching for ${fmt(dur)}` }))
+    this.streak('tilt', (s.shoulderTilt ?? 0) > T.body.tiltBad, t, T.rules.tiltSec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Shoulders tilted for ${fmt(dur)}. Stand evenly on both feet.` }))
+    this.streak('turned', s.facing != null && s.facing < T.body.facingMin, t, T.rules.turnedAwaySec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Body turned away from the panel for ${fmt(dur)}` }))
+    this.streak('hidden', Boolean(s.handsHidden), t, T.rules.handsHiddenSec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Hands out of sight for ${fmt(dur)}` }))
+    this.streak('fidget', Boolean(s.handsTogether) && s.handSpeed > T.body.handSpeedStill, t, T.rules.fidgetSec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Fidgeting with your hands for ${fmt(dur)}` }))
 
     this.touchHeld = s.faceTouch ? this.touchHeld + 1 : 0
     if (this.touchHeld === 2 && !this.prevTouch && this.cooled('touch', t, T.rules.minGapSec)) {
@@ -148,6 +190,24 @@ export class RuleEngine {
         this.flaggedMonologueStart = start
         this.add({ t, cat: 'timing', severity: 'warn', msg: `Talking for ${Math.round(room.monologueSec)}s without a break. Pause and check in.` })
       }
+    }
+
+    // Sway: shoulder midpoint wobbling side to side over the last 6 s.
+    const posed = this.recent.filter((s) => s.t > t - 6 && s.bodyX != null && s.shoulderW)
+    if (posed.length >= T.sampleHz * 4) {
+      const xs = posed.map((s) => s.bodyX!)
+      const m = xs.reduce((a, b) => a + b, 0) / xs.length
+      const sway = Math.sqrt(xs.reduce((a, x) => a + (x - m) ** 2, 0) / xs.length) / (posed.reduce((a, s) => a + s.shoulderW!, 0) / posed.length)
+      if (sway > T.body.swayBad && this.cooled('sway', t, 20)) this.add({ t: t - 6, end: t, cat: 'body', severity: 'warn', msg: 'Swaying side to side. Plant your feet.' })
+    }
+
+    // Gestures while speaking (last 30 s, hands in view): still the whole time, or natural.
+    const talk = this.recent.filter((s) => s.t > t - T.rules.stillHandsSec && s.speaking && (s.handsVisible > 0 || s.armSpan != null))
+    if (talk.length >= T.sampleHz * 15) {
+      const active = talk.filter((s) => s.handSpeed >= T.body.handSpeedStill && s.handSpeed <= T.body.handSpeedBusy).length / talk.length
+      const [lo, hi] = T.body.gestureShareGood
+      if (active < 0.05 && this.cooled('still-hands', t, 45)) this.add({ t: talk[0].t, end: t, cat: 'body', severity: 'warn', msg: 'Hands still while talking. Use them to illustrate your points.' })
+      else if (active >= lo && active <= hi && this.cooled('good-gestures', t, 45)) this.add({ t: talk[0].t, end: t, cat: 'body', severity: 'good', msg: 'Natural, purposeful gestures' })
     }
 
     const speakingEye = this.recent.filter((s) => s.t > t - 20 && s.speaking && s.face)

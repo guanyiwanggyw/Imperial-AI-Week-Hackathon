@@ -96,7 +96,7 @@ export function makeFakeData(seed = 1): FakeData {
       headYaw: lookAway ? 28 : (rand() - 0.5) * 10,
       headPitch: (rand() - 0.5) * 8,
       armsOpen: !(tt >= 60 && tt < 68),
-      handSpeed: speaking ? 0.2 + rand() * 0.4 : 0.02,
+      handSpeed: tt >= 30 && tt < 35 ? 0.3 : speaking ? (rand() < 0.5 ? 0.2 + rand() * 0.4 : 0.02) : 0.02,
       faceTouch: tt >= 75 && tt < 75.6,
       slouch: 0.05,
       smile: tt < 20 ? 0.35 : 0.1,
@@ -108,7 +108,19 @@ export function makeFakeData(seed = 1): FakeData {
       micVoice: speaking || (tt >= 20 && tt < 30),
       face: true,
       handsVisible: speaking ? 2 : 1,
-      bodyX: 0.5,
+      // Sway at 85–92 s: the body rocks side to side.
+      bodyX: tt >= 85 && tt < 92 ? 0.5 + 0.08 * Math.sin(tt * 4) : 0.5 + (rand() - 0.5) * 0.004,
+      shoulderW: 0.3,
+      shoulderTilt: 1 + rand() * 2,
+      // Turned away at 50–56 s.
+      facing: tt >= 50 && tt < 56 ? 0.6 : 0.95 + rand() * 0.05,
+      armSpan: tt >= 30 && tt < 35 ? 0.2 : 1.2,
+      // Fidgeting at 30–35 s: hands clasped and moving.
+      handsTogether: tt >= 30 && tt < 35,
+      handsHidden: false,
+      brow: 0.1 + rand() * 0.12,
+      gazeYaw: lookAway ? 28 : (rand() - 0.5) * 8,
+      gazePitch: (rand() - 0.5) * 8,
     })
   }
   return { samples, phrases, agentTurns, duration, pitchEnd }

@@ -2,24 +2,64 @@
 // in the fake-data generator and in the calibration CLI.
 import type { AgentTurn, Calibration, ContentEvaluation, EvaluationResult, FeedbackEvent, LandmarkTrack, Phrase, SampleX, ScoreCat, SegmentNote } from './contracts'
 import { mergeInto } from './rules'
-import { buildScoreSeries, computeFinalScores } from './scores'
+import { bodyBreakdown, buildScoreSeries, computeFinalScores } from './scores'
 import { T } from './thresholds'
 import { computeTiming, pitchKeywords } from './timing'
 
+const words = (text: string) => text.toLowerCase().replace(/[^a-z0-9' ]/g, ' ').split(/\s+/).filter((w) => w.length >= 3)
+
+/** Max jaw movement within any 1 s window of the phrase, and how many frames showed the face. */
+function jawEvidence(p: Phrase, samples: SampleX[]): { range: number; faceFrames: number } {
+  const w = samples.filter((s) => s.t >= p.t - 0.2 && s.t <= p.end + 0.2 && s.face && s.jawOpen != null)
+  let range = 0
+  for (let i = 0; i < w.length; i++) {
+    let lo = w[i].jawOpen!
+    let hi = lo
+    for (let k = i; k < w.length && w[k].t <= w[i].t + 1; k++) {
+      lo = Math.min(lo, w[k].jawOpen!)
+      hi = Math.max(hi, w[k].jawOpen!)
+    }
+    range = Math.max(range, hi - lo)
+  }
+  return { range, faceFrames: w.length }
+}
+
 /**
- * Transcript lines heard while a panel voice was playing are likely the panel leaking into the mic.
- * Keep them only if the speaker's mouth was moving during the line (talking over the panel is real).
+ * Keeps only the transcript phrases the speaker said. The mic and transcriber also pick up the panel through the
+ * speakers (often committed a second late) and other people in the room. A phrase is dropped when:
+ *  - its words repeat a panel line that was just spoken (an echo), or
+ *  - the face was visible and the jaw barely moved, or
+ *  - there is no clear jaw movement and it starts during (or just after) a panel line.
+ * Sessions saved before raw jaw readings existed fall back to the panel-timing check alone.
  */
-export function dropPanelLeakage(phrases: Phrase[], agentTurns: AgentTurn[], samples: SampleX[]): Phrase[] {
-  if (!agentTurns.length) return phrases
-  const haveMouth = samples.some((s) => s.face)
+export function attributeToSpeaker(phrases: Phrase[], agentTurns: AgentTurn[], samples: SampleX[]): Phrase[] {
+  const A = T.attribution
+  const haveJaw = samples.some((s) => s.jawOpen != null)
   return phrases.filter((p) => {
-    const mid = (p.t + p.end) / 2
-    if (!agentTurns.some((a) => mid >= a.t && mid <= a.end + 0.5)) return true
-    if (!haveMouth) return false
-    return samples.some((s) => s.t >= p.t && s.t <= p.end && s.mouthMoving)
+    const recent = agentTurns.filter((a) => a.t - 0.5 <= p.end && a.end + 4 >= p.t)
+    const pw = words(p.text)
+    if (pw.length >= 2) {
+      for (const a of recent) {
+        const aw = new Set(words(a.text))
+        if (pw.filter((w) => aw.has(w)).length / pw.length >= A.echoOverlap) return false
+      }
+    }
+    const duringPanel = agentTurns.some((a) => p.t >= a.t - 0.3 && p.t <= a.end + A.agentTailSec)
+    if (!haveJaw) {
+      const mid = (p.t + p.end) / 2
+      return !agentTurns.some((a) => mid >= a.t && mid <= a.end + 0.5) || samples.some((s) => s.t >= p.t && s.t <= p.end && s.mouthMoving)
+    }
+    const { range, faceFrames } = jawEvidence(p, samples)
+    if (faceFrames >= 3) {
+      if (range >= A.userJawRange) return true
+      if (range < A.otherJawRange) return false
+    }
+    return !duringPanel
   })
 }
+
+/** @deprecated Use attributeToSpeaker. */
+export const dropPanelLeakage = attributeToSpeaker
 
 /**
  * Seconds of the speaker's own speech: the transcript when there is one, else mouth-gated voice activity.
@@ -53,7 +93,7 @@ export const TIPS: Record<ScoreCat | 'timing', string> = {
 }
 
 export function assembleEvaluation(input: AssembleInput): EvaluationResult {
-  const i = { ...input, phrases: dropPanelLeakage(input.phrases, input.agentTurns, input.samples) }
+  const i = { ...input, phrases: attributeToSpeaker(input.phrases, input.agentTurns, input.samples) }
   const userSpeechSec = Math.round(userSpeechSeconds(i.phrases, i.samples) * 10) / 10
   const insufficientSpeech = userSpeechSec < T.minSpeechSec
   const keywords = pitchKeywords(i.phrases.filter((p) => p.t < i.pitchEnd), i.slideTexts)
@@ -80,6 +120,7 @@ export function assembleEvaluation(input: AssembleInput): EvaluationResult {
     insufficientSpeech,
     lookAwayEvents: ruleNonGood('eye', 'You looked away'),
     monotoneEvents: ruleNonGood('tone', 'Flat pitch'),
+    bodyEvents: i.ruleEvents.filter((e) => e.cat === 'body' && e.severity !== 'good').length,
   })
 
   let coaching: EvaluationResult['coaching']
@@ -109,6 +150,7 @@ export function assembleEvaluation(input: AssembleInput): EvaluationResult {
     scoreSeries: insufficientSpeech ? { eye: [], body: [], tone: [], coherency: [] } : buildScoreSeries(i.samples, i.phrases, i.duration, i.segments),
     finalScores: scores,
     unmeasured,
+    ...(insufficientSpeech ? {} : { bodyBreakdown: bodyBreakdown(i.samples) }),
     insufficientSpeech,
     userSpeechSec,
     timing: timing.stats,

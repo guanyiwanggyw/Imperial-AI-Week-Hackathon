@@ -2,12 +2,12 @@
 // live reading the evaluation computes from them, so thresholds can be checked against a real face and body.
 // No transcript or API keys needed; RoomState runs without phrases.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { Calibration, FeedbackEvent, RoomState, SampleX } from '../contracts'
+import type { BodyBreakdown, Calibration, FeedbackEvent, RoomState, SampleX } from '../contracts'
 import { Calibrator } from '../calibration'
 import { formatTime } from '../metrics'
 import { computeRoomState } from '../roomState'
 import { RuleEngine } from '../rules'
-import { bodyScore, eyeScore, toneScore } from '../scores'
+import { bodyBreakdown, bodyScore, eyeScore, toneScore } from '../scores'
 import { AudioMeter } from '../signals/audio'
 import { SignalSampler } from '../signals/sampler'
 import { VisionTracker } from '../signals/vision'
@@ -24,8 +24,8 @@ interface Props {
 interface Reading {
   sample: SampleX | null
   room: RoomState | null
-  eyeLookRise: number | null
   scores: { eye: number | null; body: number | null; tone: number | null }
+  breakdown: BodyBreakdown | null
   events: FeedbackEvent[]
   level: number
 }
@@ -67,7 +67,7 @@ export function TrackingDebug({ stream, streamError, onRequestMedia, onBack }: P
     return { vision, audio, sampler: new SignalSampler(vision, audio), rules: new RuleEngine(), startedAt: performance.now() }
   }, [])
   const [layers, setLayers] = useState<OverlayLayers>({ face: true, hands: true, pose: true })
-  const [reading, setReading] = useState<Reading>({ sample: null, room: null, eyeLookRise: null, scores: { eye: null, body: null, tone: null }, events: [], level: 0 })
+  const [reading, setReading] = useState<Reading>({ sample: null, room: null, scores: { eye: null, body: null, tone: null }, breakdown: null, events: [], level: 0 })
   const [calibration, setCalibration] = useState<Calibration>(engine.sampler.calibration)
   const [calibrating, setCalibrating] = useState<number | null>(null)
   const [visionState, setVisionState] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -88,13 +88,11 @@ export function TrackingDebug({ stream, streamError, onRequestMedia, onBack }: P
     const uiTimer = window.setInterval(() => {
       const t = now()
       const recent = sampler.samples.filter((s) => s.t > t - 10)
-      const f = vision.latest
-      const cal = sampler.calibration
       setReading({
         sample: sampler.samples[sampler.samples.length - 1] ?? null,
         room,
-        eyeLookRise: f?.face ? Math.max(0, ...Object.entries(f.eyeLook).map(([k, v]) => v - (cal.eyeLook0[k] ?? 0))) : null,
         scores: { eye: eyeScore(recent), body: bodyScore(recent), tone: toneScore(recent, [], t - 10, t) },
+        breakdown: recent.some((x) => x.face) ? bodyBreakdown(recent) : null,
         events: rules.events.slice(-8).reverse(),
         level: audio.level,
       })
@@ -190,25 +188,29 @@ export function TrackingDebug({ stream, streamError, onRequestMedia, onBack }: P
               {calibration.usedDefaults
                 ? 'Not calibrated: angles are relative to looking straight at the camera.'
                 : `Calibrated on ${calibration.frames} frames: rest yaw ${calibration.yaw0.toFixed(1)}°, pitch ${calibration.pitch0.toFixed(1)}°${calibration.headRise0 ? ', posture baseline set' : ', no posture baseline (shoulders not visible)'}.`}{' '}
-              Face outline: green on target, red looking away. Hands turn amber when touching your face. Forearms turn red when crossed; the shoulder line turns amber when slouching.
+              Face outline: green on target, red looking away; the arrow shows where your eyes point (a dot means on target). Hands turn amber when touching your face. Forearms turn red when crossed; the shoulder line turns amber when slouching.
             </div>
           </div>
 
           <div className="stack" style={{ gap: 12 }}>
             <Section title="Eye contact">
               <Row label="Gaze on target" value={s ? (s.gazeOnTarget ? 'yes' : 'no') : '–'} state={s ? (s.gazeOnTarget ? 'good' : 'bad') : null} />
-              <Row label="Head yaw" value={s?.face ? `${s.headYaw.toFixed(1)}°` : '–'} state={s?.face ? (Math.abs(s.headYaw) < T.gaze.maxYawDeg ? 'good' : 'bad') : null} />
-              <Row label="Head pitch" value={s?.face ? `${s.headPitch.toFixed(1)}°` : '–'} state={s?.face ? (Math.abs(s.headPitch) < T.gaze.maxPitchDeg ? 'good' : 'bad') : null} />
-              <Row label="Eye movement" value={reading.eyeLookRise === null ? '–' : reading.eyeLookRise.toFixed(2)} state={reading.eyeLookRise === null ? null : reading.eyeLookRise < T.gaze.maxEyeLookRise ? 'good' : 'bad'} />
+              <Row label="Gaze (head + eyes)" value={s?.gazeYaw != null ? `${s.gazeYaw.toFixed(0)}° · ${s.gazePitch!.toFixed(0)}°` : '–'} state={s?.gazeYaw != null ? (Math.abs(s.gazeYaw) < T.gaze.maxGazeYawDeg && Math.abs(s.gazePitch!) < T.gaze.maxGazePitchDeg ? 'good' : 'bad') : null} />
+              <Row label="Eyes only (iris)" value={s?.eyeYaw != null ? `${s.eyeYaw.toFixed(0)}° · ${s.eyePitch!.toFixed(0)}°` : '–'} />
+              <Row label="Head only" value={s?.face ? `${s.headYaw.toFixed(0)}° · ${s.headPitch.toFixed(0)}°` : '–'} state={s?.face ? (Math.abs(s.headYaw) < T.gaze.maxHeadYawDeg ? null : 'bad') : null} />
               <Row label="Looking away for" value={r ? `${r.gazeAwaySec.toFixed(1)} s` : '–'} state={r ? (r.gazeAwaySec > T.rules.lookAwaySec ? 'bad' : r.gazeAwaySec > 1 ? 'warn' : 'good') : null} />
+              <p className="faint" style={{ margin: '6px 0 0', fontSize: 12 }}>Angles are left/right · up/down from where you looked during calibration.</p>
             </Section>
             <Section title="Body language">
               <Row label="Arms" value={body ? (body.armsOpen ? 'open' : 'crossed') : 'no body detected'} state={body ? (body.armsOpen ? 'good' : 'bad') : null} />
               <Row label="Slouch" value={body ? body.slouch.toFixed(2) : '–'} state={body ? (body.slouch > T.body.slouchBad ? 'warn' : 'good') : null} />
+              <Row label="Shoulder tilt" value={body?.shoulderTilt != null ? `${body.shoulderTilt.toFixed(0)}°` : '–'} state={body?.shoulderTilt != null ? (body.shoulderTilt > T.body.tiltBad ? 'warn' : 'good') : null} />
+              <Row label="Facing the panel" value={body?.facing != null ? `${Math.round(body.facing * 100)}%` : 'calibrate first'} state={body?.facing != null ? (body.facing < T.body.facingMin ? 'warn' : 'good') : null} />
               <Row label="Hand speed" value={s ? `${hand.toFixed(2)} · ${handLevel}` : '–'} state={s ? (handLevel === 'natural' ? 'good' : 'warn') : null} />
-              <Row label="Hands visible" value={s ? String(s.handsVisible) : '–'} />
+              <Row label="Hands together" value={s ? (s.handsTogether ? 'yes' : 'no') : '–'} state={s?.handsTogether ? 'warn' : null} />
+              <Row label="Hands hidden" value={s ? (s.handsHidden ? 'yes' : 'no') : '–'} state={s?.handsHidden ? 'warn' : null} />
               <Row label="Touching face" value={s ? (s.faceTouch ? 'yes' : 'no') : '–'} state={s ? (s.faceTouch ? 'warn' : 'good') : null} />
-              <Row label="Smile" value={s ? s.smile.toFixed(2) : '–'} />
+              <Row label="Smile · brows" value={s ? `${s.smile.toFixed(2)} · ${(s.brow ?? 0).toFixed(2)}` : '–'} />
             </Section>
             <Section title="Voice">
               <Row label="Mic hears a voice" value={s ? (s.micVoice ? 'yes' : 'no') : '–'} state={s?.micVoice ? 'warn' : null} />
@@ -226,6 +228,10 @@ export function TrackingDebug({ stream, streamError, onRequestMedia, onBack }: P
             <Section title="Scores, last 10 s">
               <Row label="Eye contact" value={fmtScore(reading.scores.eye)} state={scoreState(reading.scores.eye)} />
               <Row label="Body language" value={fmtScore(reading.scores.body)} state={scoreState(reading.scores.body)} />
+              {reading.breakdown &&
+                (Object.entries(reading.breakdown) as [string, number | null][]).map(([k, v]) => (
+                  <Row key={k} label={`  · ${k === 'selfTouch' ? 'self-touch' : k}`} value={fmtScore(v)} state={scoreState(v)} />
+                ))}
               <Row label="Tone (pitch variety)" value={fmtScore(reading.scores.tone)} state={scoreState(reading.scores.tone)} />
             </Section>
             <Section title="Rule events">

@@ -2,11 +2,12 @@
 // Measured layer (signals, rules, timing, scores) + Claude judge (segments during the session, streamed merge at the end).
 // All scores are 0–100.
 import { errorText } from '../api'
-import type { Report, SessionData } from '../types'
+import type { DeliveryScore, Report, SessionData, Word } from '../types'
 import { assembleEvaluation, TIPS } from './assemble'
 import type { AgentTurn, Calibration, ContentEvaluation, EvaluationResult, FeedbackEvent, LandmarkTrack, Phrase, SampleX, SegmentNote } from './contracts'
 import { finalJudge, transcriptLines } from './judge'
-import { averageScore, bestMoment, deliveryScores, deliveryStats } from './metrics'
+import { averageScore, bestMoment, deliveryScores, deliveryStats, findPauses, paceScore, pitchSpread, type DeliveryStats } from './metrics'
+import { sustainedWpm } from './rules'
 import { T } from './thresholds'
 import { phrasesFromWords } from './transcript/phrases'
 
@@ -70,12 +71,78 @@ export interface BuildOptions {
   skipJudge?: boolean
 }
 
-export async function buildReport(session: SessionData, capture: EvalCapture | null, opts: BuildOptions = {}): Promise<{ report: Report; evaluation: EvaluationResult }> {
-  const stats = deliveryStats(session)
-  const best = bestMoment(session)
+/** Transcript words inside the phrases attributed to the speaker (drops the panel's lines and other voices). */
+function speakerWords(words: Word[], phrases: Phrase[]): Word[] {
+  return words.filter((w) => phrases.some((p) => w.start >= p.t - 0.15 && w.end <= p.end + 0.15))
+}
 
-  // Prefer the accurate batch transcript when it replaced the live one.
-  const accurate = session.words !== session.liveWords
+/**
+ * The per-signal delivery bars, computed only from the speaker's own speech. Eye contact and gestures come straight
+ * from the evaluation so the bars cannot contradict the category scores; tonality needs ~6 s of voiced speech.
+ */
+function deliveryBars(stats: DeliveryStats, ev: EvaluationResult, own: Word[], session: SessionData): DeliveryScore[] {
+  const inPitch = own.filter((w) => w.start < session.pitchEnd)
+  const wordCount = inPitch.length
+  if (ev.insufficientSpeech) {
+    return deliveryScores(stats).map((d) => ({ ...d, score: null, value: 'Not scored', note: 'You did not speak enough for this to be scored.' }))
+  }
+  const few = wordCount < T.minWords
+  const spread = pitchSpread(ev.samples, 0, ev.samples[ev.samples.length - 1]?.t ?? 0)
+  const gestures = ev.bodyBreakdown?.gestures ?? null
+  return deliveryScores(stats).map((d) => {
+    if (few && (d.key === 'pace' || d.key === 'fillers' || d.key === 'pauses')) {
+      return { ...d, score: null, value: 'Not enough speech', note: `Needs at least ${T.minWords} of your own words; we heard ${wordCount}.` }
+    }
+    if (d.key === 'pace') {
+      const wpm = sustainedWpm(ev.transcript.filter((p) => p.t < session.pitchEnd), 0, session.pitchEnd)
+      if (wpm === null) return { ...d, score: null, value: 'Not enough sustained speech', note: 'Pace needs stretches of at least 8 seconds of continuous talking.' }
+      const [lo, hi] = T.voice.paceGood
+      return {
+        ...d,
+        score: Math.round(paceScore(wpm)),
+        value: `${Math.round(wpm)} wpm`,
+        note: wpm > hi ? 'Faster than most audiences can follow. Slow down on key points.' : wpm < lo ? 'On the slow side. Tighten sentences to keep energy up.' : 'A comfortable pace.',
+      }
+    }
+    if (d.key === 'pauses') {
+      // Gaps while the panel talks, or long turn-taking gaps, are not your pauses.
+      const pauses = findPauses(inPitch, session.slideChanges.map((s) => s.t)).filter(
+        (p) => p.end - p.start <= 6 && !ev.agentTurns.some((a) => p.start < a.end + 0.5 && p.end > a.t - 0.5),
+      )
+      const hes = pauses.filter((p) => p.kind === 'hesitation').length
+      const del = pauses.length - hes
+      const minutes = Math.max(inPitch.length / Math.max(stats.wpm ?? 140, 60), 0.25)
+      return {
+        ...d,
+        score: Math.round(Math.min(100, Math.max(0, 100 - (hes / minutes) * 20 + Math.min(del, 4) * 2.5))),
+        value: `${del} deliberate, ${hes} hesitant`,
+        note: hes > del ? 'Most pauses happen mid-sentence. Pause after a point, not inside it.' : 'Pauses mostly land at the end of points, which reads as confident.',
+      }
+    }
+    if (d.key === 'eye_contact') return { ...d, score: ev.unmeasured.includes('eye') ? null : ev.finalScores.eye }
+    if (d.key === 'gestures') {
+      return gestures === null
+        ? { ...d, score: null, value: 'Not measured', note: 'Gestures need your hands in view while you speak.' }
+        : { ...d, score: gestures, value: gestures >= 80 ? 'Natural' : gestures >= 55 ? 'Some' : 'Few or frantic' }
+    }
+    if (d.key === 'tonality') {
+      if (spread === null) return { ...d, score: null, value: 'Not enough voice', note: 'Needs about 6 seconds of your voiced speech to judge pitch variety.' }
+      const score = Math.round(Math.min(100, Math.max(0, ((spread - 1) / (T.voice.expressiveSemitones - 1)) * 100)))
+      return {
+        ...d,
+        score,
+        value: `${spread.toFixed(1)} semitones · ${score < 35 ? 'monotone' : score < 70 ? 'varied' : 'expressive'}`,
+        note: score < 35 ? 'Your voice stayed flat. Lift your pitch on the problem and the ask.' : 'Your voice carried variation and energy.',
+      }
+    }
+    return d
+  })
+}
+
+export async function buildReport(session: SessionData, capture: EvalCapture | null, opts: BuildOptions = {}): Promise<{ report: Report; evaluation: EvaluationResult }> {
+  // Prefer the accurate batch transcript when it replaced the live one (compared by content: identity is lost on reload).
+  const sameWords = (a: Word[], b: Word[]) => a.length === b.length && a.every((w, k) => w.text === b[k].text && Math.abs(w.start - b[k].start) < 0.01)
+  const accurate = !sameWords(session.words, session.liveWords)
   const phrases = capture && !accurate ? capture.phrases : phrasesFromWords(session.words)
   const base = {
     samples: capture?.samples ?? [],
@@ -91,10 +158,11 @@ export async function buildReport(session: SessionData, capture: EvalCapture | n
   }
   const prelim = assembleEvaluation({ ...base, content: null })
   const insufficient = prelim.insufficientSpeech
-  // Legacy per-signal bars (pace, fillers, pauses, eye contact, gestures, tonality): blank when the speaker barely spoke.
-  const delivery = deliveryScores(stats).map((d) =>
-    insufficient ? { ...d, score: null, value: 'Not scored', note: 'You did not speak enough for this to be scored.' } : d,
-  )
+  // Measured delivery from the speaker's own words only (prelim.transcript is already attributed to the speaker).
+  const own = speakerWords(session.words, prelim.transcript)
+  const ownSession = { ...session, words: own }
+  const stats = deliveryStats(ownSession)
+  const best = bestMoment(ownSession)
 
   let content: ContentEvaluation | null = null
   let contentError: string | null = insufficient
@@ -136,6 +204,7 @@ export async function buildReport(session: SessionData, capture: EvalCapture | n
   }
 
   const evaluation = content ? assembleEvaluation({ ...base, content }) : prelim
+  const delivery = deliveryBars(stats, evaluation, own, session)
   const fs = evaluation.finalScores
   const cScore = content ? contentScore(content, session.qna.length > 0) : null
   const deliveryScore = averageScore((['eye', 'body', 'tone'] as const).map((c) => (evaluation.unmeasured.includes(c) ? null : fs[c])))

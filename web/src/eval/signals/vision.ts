@@ -73,6 +73,9 @@ export interface PosePoints {
   rightShoulder: Point
   leftWrist: Point | null
   rightWrist: Point | null
+  /** Hips, when the waist is in frame. */
+  leftHip: Point | null
+  rightHip: Point | null
 }
 
 /** One analysed video frame. Coordinates are normalised to the image (0–1). Angles in degrees. */
@@ -80,8 +83,20 @@ export interface VisionFrame {
   /** performance.now() when the frame was analysed */
   at: number
   face: boolean
+  /** Head yaw and pitch in degrees, signed in image terms: + = turned towards image right / tilted down. */
   yaw: number
   pitch: number
+  /** Eye-in-head angles from the irises (degrees, same signs). Null when the eyes are closed or not found. */
+  eyeYaw: number | null
+  eyePitch: number | null
+  /** Eyes closed (blink). */
+  blink: boolean
+  /** Eyebrow raise, 0–1. */
+  brow: number
+  /** Distance between the outer eye corners, aspect-corrected (normalised image width units). */
+  eyeSpan: number | null
+  /** Video width / height, to measure distances and angles without stretching. */
+  aspect: number
   eyeLook: Record<string, number>
   smile: number
   /** jawOpen blendshape, 0–1, for the mouth-movement speech gate. */
@@ -104,6 +119,58 @@ const EYE_LOOK = ['eyeLookInLeft', 'eyeLookOutLeft', 'eyeLookUpLeft', 'eyeLookDo
 export const EYE_LOOK_KEYS = EYE_LOOK
 
 const deg = (rad: number) => (rad * 180) / Math.PI
+const asinDeg = (v: number) => deg(Math.asin(Math.max(-0.95, Math.min(0.95, v))))
+
+/**
+ * Iris position inside one eye, as offsets relative to the eye width: h along the corner-to-corner axis
+ * (+ = towards image right, 0 = centred), v perpendicular to it from the lid midpoint (+ = down).
+ * x is multiplied by the aspect ratio so the geometry is in square units.
+ */
+export function irisOffset(lm: NormalizedLandmark[], iris: number, c1: number, c2: number, up: number, low: number, aspect: number): { h: number; v: number } | null {
+  const P = (i: number) => ({ x: lm[i].x * aspect, y: lm[i].y })
+  if (!lm[iris] || !lm[c1] || !lm[c2] || !lm[up] || !lm[low]) return null
+  const a = P(c1)
+  const b = P(c2)
+  let ux = b.x - a.x
+  let uy = b.y - a.y
+  const w = Math.hypot(ux, uy)
+  if (w < 1e-4) return null
+  ux /= w
+  uy /= w
+  let ox = a.x
+  let oy = a.y
+  if (ux < 0) {
+    ux = -ux
+    uy = -uy
+    ox = b.x
+    oy = b.y
+  }
+  const i = P(iris)
+  const along = ((i.x - ox) * ux + (i.y - oy) * uy) / w
+  const m = { x: (P(up).x + P(low).x) / 2, y: (P(up).y + P(low).y) / 2 }
+  const v = ((i.x - m.x) * -uy + (i.y - m.y) * ux) / w
+  return { h: along - 0.5, v }
+}
+
+/**
+ * The transformation matrix gives accurate head angles, but its sign convention is not documented. This keeps
+ * a running agreement with a simple image-space estimate (nose offset from the eyes) and flips the sign to match,
+ * so head and eye angles add up the same way.
+ */
+class SignAligner {
+  private acc = 0
+  private meanA = 0
+  private meanB = 0
+  private n = 0
+  sign(a: number, b: number) {
+    this.n++
+    const k = this.n < 30 ? 1 / this.n : 0.03
+    this.meanA += (a - this.meanA) * k
+    this.meanB += (b - this.meanB) * k
+    this.acc = this.acc * 0.999 + (a - this.meanA) * (b - this.meanB)
+    return this.acc < 0 ? -1 : 1
+  }
+}
 
 /**
  * Head yaw and pitch from MediaPipe's 4x4 facial transformation matrix (column-major).
@@ -146,6 +213,9 @@ export class VisionTracker {
   error: string | null = null
   private timer: number | undefined
   private tick = 0
+  private yawSign = new SignAligner()
+  private pitchSign = new SignAligner()
+  private lastEye: { yaw: number; pitch: number } | null = null
   /** Bumped by start() and stop(), so a start whose model load finishes after a stop (React StrictMode) does nothing. */
   private generation = 0
 
@@ -172,7 +242,44 @@ export class VisionTracker {
         const blend = f.faceBlendshapes?.[0]?.categories ?? []
         const score = (name: string) => blend.find((c) => c.categoryName === name)?.score ?? 0
         const matrix = f.facialTransformationMatrixes?.[0]?.data
-        const angles = matrix ? headAngles(matrix) : { yaw: 0, pitch: 0 }
+        const aspect = video.videoWidth && video.videoHeight ? video.videoWidth / video.videoHeight : 16 / 9
+        const mat = matrix ? headAngles(matrix) : { yaw: 0, pitch: 0 }
+        let yaw = mat.yaw
+        let pitch = mat.pitch
+        let eyeYaw: number | null = null
+        let eyePitch: number | null = null
+        let eyeSpan: number | null = null
+        const blink = Math.max(score('eyeBlinkLeft'), score('eyeBlinkRight')) > T.gaze.blinkClosed
+        if (lm) {
+          // Image-space head estimates, only used to fix the matrix angles' signs.
+          const eyeMid = { x: ((lm[33].x + lm[263].x) / 2) * aspect, y: (lm[33].y + lm[263].y) / 2 }
+          eyeSpan = Math.hypot((lm[263].x - lm[33].x) * aspect, lm[263].y - lm[33].y)
+          const faceH = Math.abs(lm[152].y - lm[10].y) || 1
+          const geoYaw = (lm[1].x * aspect - eyeMid.x) / (eyeSpan || 1)
+          const geoPitch = (lm[1].y - eyeMid.y) / faceH
+          if (matrix) {
+            yaw = mat.yaw * this.yawSign.sign(mat.yaw, geoYaw)
+            pitch = mat.pitch * this.pitchSign.sign(mat.pitch, geoPitch)
+          } else {
+            yaw = geoYaw * 60
+            pitch = (geoPitch - 0.2) * 90
+          }
+          if (blink) {
+            if (this.lastEye) ({ yaw: eyeYaw, pitch: eyePitch } = this.lastEye)
+          } else {
+            const a = irisOffset(lm, 468, 33, 133, 159, 145, aspect)
+            const b = irisOffset(lm, 473, 362, 263, 386, 374, aspect)
+            const eyes = [a, b].filter((e): e is { h: number; v: number } => e !== null)
+            if (eyes.length) {
+              const h = eyes.reduce((s, e) => s + e.h, 0) / eyes.length
+              const v = eyes.reduce((s, e) => s + e.v, 0) / eyes.length
+              const blendPitch = ((score('eyeLookDownLeft') + score('eyeLookDownRight') - score('eyeLookUpLeft') - score('eyeLookUpRight')) / 2) * T.gaze.blendPitchDeg
+              eyeYaw = asinDeg(T.gaze.irisGain * h)
+              eyePitch = (1 - T.gaze.blendPitchWeight) * asinDeg(T.gaze.irisGain * v) + T.gaze.blendPitchWeight * blendPitch
+              this.lastEye = { yaw: eyeYaw, pitch: eyePitch }
+            }
+          }
+        }
         const pl = p?.landmarks[0]
         const prevPose = this.latest?.pose ?? null
         const posePoints: PosePoints | null = pl
@@ -181,7 +288,7 @@ export class VisionTracker {
               const ls = visible(pl[11])
               const rs = visible(pl[12])
               if (!nose || !ls || !rs) return null
-              return { nose, leftShoulder: ls, rightShoulder: rs, leftWrist: visible(pl[15]), rightWrist: visible(pl[16]) }
+              return { nose, leftShoulder: ls, rightShoulder: rs, leftWrist: visible(pl[15]), rightWrist: visible(pl[16]), leftHip: visible(pl[23]), rightHip: visible(pl[24]) }
             })()
           : p
             ? null
@@ -189,8 +296,14 @@ export class VisionTracker {
         this.latest = {
           at: ts,
           face: Boolean(lm),
-          yaw: angles.yaw,
-          pitch: angles.pitch,
+          yaw,
+          pitch,
+          eyeYaw,
+          eyePitch,
+          blink,
+          brow: (score('browInnerUp') + (score('browOuterUpLeft') + score('browOuterUpRight')) / 2) / 2,
+          eyeSpan,
+          aspect,
           eyeLook: Object.fromEntries(EYE_LOOK.map((k) => [k, score(k)])),
           smile: (score('mouthSmileLeft') + score('mouthSmileRight')) / 2,
           jawOpen: score('jawOpen'),

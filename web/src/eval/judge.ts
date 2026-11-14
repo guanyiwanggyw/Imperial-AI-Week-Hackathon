@@ -31,6 +31,12 @@ export function signalSummary(samples: SampleX[], phrases: Phrase[], from: numbe
     eye_on_target_share: share(face, (s) => s.gazeOnTarget),
     arms_open_share: share(face, (s) => s.armsOpen),
     face_touch_frames: win.filter((s) => s.faceTouch).length,
+    facing_panel_share: share(face.filter((s) => s.facing != null), (s) => s.facing! >= 0.75),
+    gesturing_while_speaking_share: share(
+      win.filter((s) => s.speaking),
+      (s) => s.handSpeed >= 0.05 && s.handSpeed <= 1.2,
+    ),
+    fidget_frames: win.filter((s) => s.handsTogether && s.handSpeed > 0.05).length,
     mean_slouch_0_1: face.length ? r(face.reduce((a, s) => a + s.slouch, 0) / face.length) : null,
     speaking_share: share(win, (s) => s.speaking),
     pitch_variety_semitones: spread === null ? null : r(spread, 1),

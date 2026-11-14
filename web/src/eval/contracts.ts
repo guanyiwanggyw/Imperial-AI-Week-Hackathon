@@ -87,6 +87,36 @@ export type SampleX = Sample & {
   micVoice: boolean
   /** Raw jawOpen blendshape (0–1), kept for tuning the mouth gate. Null without a face. */
   jawOpen?: number | null
+  /** Combined gaze (head + eyes) relative to calibration, degrees. + = towards image right / down. */
+  gazeYaw?: number | null
+  gazePitch?: number | null
+  /** Eye-in-head angle from the irises, degrees (before adding head pose). */
+  eyeYaw?: number | null
+  eyePitch?: number | null
+  /** Horizontal shoulder width (normalised image x), to express sway in shoulder widths. */
+  shoulderW?: number | null
+  /** Shoulder line angle from horizontal, degrees (absolute). */
+  shoulderTilt?: number | null
+  /** Torso facing the camera relative to baseline (1 = square on, lower = turned away). */
+  facing?: number | null
+  /** Distance between the wrists, in shoulder widths. Null unless both wrists are visible. */
+  armSpan?: number | null
+  /** Wrists close together (clasping, wringing). */
+  handsTogether?: boolean
+  /** Waist is in frame but neither hand can be seen (pockets, behind the back). */
+  handsHidden?: boolean
+  /** Eyebrow raise (browInnerUp/OuterUp average), 0–1, for facial expressiveness. */
+  brow?: number | null
+}
+
+/** Body language broken into the parts of the Tübingen presentation rubric and coaches' criteria. Each 0–100 or null. */
+export interface BodyBreakdown {
+  posture: number | null
+  openness: number | null
+  gestures: number | null
+  selfTouch: number | null
+  movement: number | null
+  expression: number | null
 }
 
 /** Baseline captured during the pre-pitch countdown. Angles in degrees. */
@@ -98,6 +128,11 @@ export interface Calibration {
   /** (shoulder midpoint y − nose y) / shoulder width while standing naturally. */
   headRise0: number | null
   shoulderWidth0: number | null
+  /** Combined gaze (head + eyes) while looking at the target, degrees. */
+  gazeYaw0?: number
+  gazePitch0?: number
+  /** Shoulder width / eye span while standing square on. */
+  facing0?: number | null
   frames: number
   /** True when too few frames were seen and defaults were used. */
   usedDefaults: boolean
@@ -194,6 +229,8 @@ export interface EvaluationResult {
   finalScores: Record<ScoreCat | 'overall', number>
   /** Categories that could not be measured (their finalScores value is 0 and they are left out of overall). */
   unmeasured: ScoreCat[]
+  /** The parts of the body-language score. */
+  bodyBreakdown?: BodyBreakdown
   /** The speaker said too little for any score to mean anything. All categories are then unmeasured. */
   insufficientSpeech: boolean
   /** Seconds of the speaker's own speech (transcript if available, else mouth-gated voice activity). */
