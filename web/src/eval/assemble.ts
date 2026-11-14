@@ -1,6 +1,6 @@
 // Pure assembly of an EvaluationResult from collected data. No network, no DOM: usable in the browser,
 // in the fake-data generator and in the calibration CLI.
-import type { AgentTurn, Calibration, ContentEvaluation, EvaluationResult, FeedbackEvent, Phrase, SampleX, ScoreCat, SegmentNote } from './contracts'
+import type { AgentTurn, Calibration, ContentEvaluation, EvaluationResult, FeedbackEvent, LandmarkTrack, Phrase, SampleX, ScoreCat, SegmentNote } from './contracts'
 import { mergeInto } from './rules'
 import { buildScoreSeries, computeFinalScores } from './scores'
 import { T } from './thresholds'
@@ -41,6 +41,7 @@ export interface AssembleInput {
   pitchEnd: number
   slideTexts: string[]
   content: ContentEvaluation | null
+  landmarks?: LandmarkTrack
 }
 
 export const TIPS: Record<ScoreCat | 'timing', string> = {
@@ -115,5 +116,6 @@ export function assembleEvaluation(input: AssembleInput): EvaluationResult {
     coaching,
     segments: i.segments,
     calibration: i.calibration,
+    ...(i.landmarks?.frames.length ? { landmarks: i.landmarks } : {}),
   }
 }

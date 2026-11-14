@@ -8,6 +8,7 @@ import { synthesiaRouter } from "./synthesia.js";
 import { avatarRouter } from "./avatar.js";
 import { redactSecrets } from "./redact.js";
 import { llmRouter } from "./llm.js";
+import { agentsRouter } from "./agents.js";
 import { sessionsRouter } from "./sessions.js";
 import { evalRouter } from "./eval/judge.js";
 
@@ -22,6 +23,7 @@ app.use("/api/avatar", avatarRouter);
 app.use("/api/media/synthesia", synthesiaRouter);
 app.use("/api/media", mediaRouter);
 app.use("/api/llm", llmRouter);
+app.use("/api/agents", agentsRouter);
 app.use("/api/sessions", sessionsRouter);
 app.use("/api/eval", evalRouter);
 

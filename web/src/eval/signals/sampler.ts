@@ -1,6 +1,8 @@
 // Merges the latest vision and audio frames into one calibrated Sample, ~7 times a second.
 import type { AudioSample, VisionSample } from '../../types'
-import type { Calibration, SampleX } from '../contracts'
+import type { Calibration, LandmarkTrack, SampleX } from '../contracts'
+import { FACE_IDX, POSE_IDX } from '../debug/draw'
+import { emptyTrack, encodeFrame } from '../landmarks'
 import { DEFAULT_CALIBRATION, headRise } from '../calibration'
 import { T } from '../thresholds'
 import type { AudioMeter } from './audio'
@@ -65,6 +67,8 @@ export class SignalSampler {
   legacyVision: VisionSample[] = []
   legacyAudio: AudioSample[] = []
   calibration: Calibration = DEFAULT_CALIBRATION
+  /** Landmarks of every analysed frame while recording, for the playback overlay. */
+  landmarks: LandmarkTrack = emptyTrack(FACE_IDX, POSE_IDX)
   private timer: number | undefined
   private prevWrists: Point[] = []
   private prevAt = 0
@@ -128,6 +132,7 @@ export class SignalSampler {
     // Hand speed in shoulder widths per second, only for wrists in the waist-to-shoulder zone.
     let movement = 0
     if (vf && vf.at !== this.lastFrameAt) {
+      this.landmarks.frames.push(encodeFrame(this.landmarks, t, vf.raw))
       const sw = vf.pose ? Math.abs(vf.pose.leftShoulder.x - vf.pose.rightShoulder.x) || 0.25 : (this.calibration.shoulderWidth0 ?? 0.25)
       const shoulderY = vf.pose ? (vf.pose.leftShoulder.y + vf.pose.rightShoulder.y) / 2 : null
       const inZone = vf.wrists.filter((w) => shoulderY === null || (w.y > shoulderY - 0.3 * sw && w.y < shoulderY + 2.5 * sw))

@@ -9,7 +9,8 @@ import { backdropKey, loadAssets, type Assets } from '../lib/media'
 import { planQuestions, runTurn, type QnaMode } from '../lib/qna'
 import { chooseReaction } from '../lib/reactions'
 import { SessionRecorder } from '../lib/recorder'
-import type { QnaTurn, SessionConfig, SessionData, SessionEvent, Word } from '../types'
+import type { Persona, QnaTurn, SessionConfig, SessionData, SessionEvent, Word } from '../types'
+import { Orchestrator } from '../agents/orchestrator'
 import recordingDot from '../assets/recording-dot.svg'
 import { Audience, type ActiveReaction } from './Audience'
 import { Steps, TopNav } from './Chrome'
@@ -106,12 +107,32 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
     setPhase(p)
   }
 
+  // Interactive format: no timer, no fixed Q&A; the orchestrator lets the panel join in (web/src/agents).
+  const interactive = config.format === 'interactive'
+  const orchestrator = useRef<Orchestrator | null>(null)
+
+  /** Says a line as an agent and logs it as an AgentTurn (starts at first audio, ends when speech ends). */
+  async function sayLogged(persona: Persona, seat: number, text: string, signal: AbortSignal) {
+    const askedAt = clock.now()
+    evalRt.agentSpeaking(true, persona.name)
+    evalRt.agentCaption(text)
+    try {
+      const log = await speakAs(avatars, persona, seat, text, signal)
+      evalRt.agentSpeaking(false, persona.name, { startAt: askedAt + (log.latencyMs ?? 0) / 1000, interrupted: log.interrupted })
+      return log
+    } catch (err) {
+      evalRt.agentSpeaking(false, persona.name)
+      throw err
+    }
+  }
+
   // ---------- events and reactions ----------
 
   const onEvent = useCallback(
     (e: SessionEvent) => {
       if (e.type === 'tool_called' && e.detail) setToolNotes((n) => [...n, e.detail!.split(': ').slice(1).join(': ')])
       if (phaseRef.current !== 'pitch') return
+      orchestrator.current?.notifyEvent(e)
       panel.personas.forEach((p) => {
         // Live avatars idle on their own; reaction clips are for the still portraits.
         if (avatars.seat(p.id).status === 'live') return
@@ -153,9 +174,26 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
       evalRt.start(clock.now, () => !clock.paused)
       slideChanges.current = [{ t: 0, slide: 0 }]
       setPhaseBoth('pitch')
+      if (interactive) {
+        orchestrator.current = new Orchestrator({
+          personas: panel.personas,
+          drafts: status.anthropic,
+          context: config.context,
+          now: clock.now,
+          active: () => !clock.paused && phaseRef.current === 'pitch',
+          room: () => evalRt.roomState,
+          phrases: () => transcript.phrases,
+          samples: () => evalRt.sampler.samples,
+          say: sayLogged,
+          onExchange: () => evalRt.exchangeEnded(),
+          onDecision: (d) => console.info(`[agents] ${d.personaId} ${d.kind} (${d.reason}): ${d.text}`),
+        })
+        orchestrator.current.start()
+      }
     }, 1000)
     return () => {
       window.clearInterval(timer)
+      orchestrator.current?.stop()
       evalRt.stop()
       skipRef.current?.abort()
       stopQna.current = true
@@ -291,20 +329,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
             .map((w) => w.text)
             .join(' '),
         getAnswerWords: (from: number) => transcript.words.filter((w) => w.start >= from),
-        say: async (text: string, signal: AbortSignal) => {
-          // Spoken mode: log the agent line for the evaluation (starts at first audio, ends when speech ends).
-          const askedAt = clock.now()
-          evalRt.agentSpeaking(true, persona.name)
-          evalRt.agentCaption(text)
-          try {
-            const log = await speakAs(avatars, persona, seat, text, signal)
-            evalRt.agentSpeaking(false, persona.name, { startAt: askedAt + (log.latencyMs ?? 0) / 1000, interrupted: log.interrupted })
-            return log
-          } catch (err) {
-            evalRt.agentSpeaking(false, persona.name)
-            throw err
-          }
-        },
+        // Spoken mode: log the agent line for the evaluation.
+        say: (text: string, signal: AbortSignal) => sayLogged(persona, seat, text, signal),
         onEvent: (e: SessionEvent) => {
           engine.current!.events.push(e)
           onEvent(e)
@@ -352,6 +378,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
     if (phaseRef.current === 'finishing') return
     stopQna.current = true
     skipRef.current?.abort()
+    orchestrator.current?.stop()
     void avatars.stop()
     setPhaseBoth('finishing')
     const duration = clock.now()
@@ -421,10 +448,13 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
 
   // The asking panelist's line as it is being spoken (spoken mode), for the question card.
   const askingLine = [...avatarState.lines].reverse().find((l) => l.personaId === activeId)
-  const over = phase === 'pitch' && now > config.pitchSeconds
+  const over = !interactive && phase === 'pitch' && now > config.pitchSeconds
+  // Interactive: the line an agent is saying right now, for the card under the panel.
+  const liveLine = interactive && phase === 'pitch' ? [...avatarState.lines].reverse().find((l) => !l.done) : undefined
+  const liveName = liveLine ? panel.personas.find((p) => p.id === liveLine.personaId)?.name : undefined
   const backdrop = assets[backdropKey(panel)] ?? null
 
-  const phaseLabel = { countdown: 'Get ready', pitch: paused ? 'Paused' : 'Pitch in progress', conferring: 'Panel conferring', qna: 'Questions', finishing: 'Finishing' }[phase] ?? ''
+  const phaseLabel = { countdown: 'Get ready', pitch: paused ? 'Paused' : interactive ? 'Interactive session' : 'Pitch in progress', conferring: 'Panel conferring', qna: 'Questions', finishing: 'Finishing' }[phase] ?? ''
   const shownTime = phase === 'pitch' ? now : pitchEnd.current || now
 
   return (
@@ -462,7 +492,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
                 ))}
               </div>
             )}
-            {slides.length === 0 && config.questionCount > 0 && phase === 'pitch' && <div className="stage-note">Your panel will ask follow-up questions after your pitch.</div>}
+            {slides.length === 0 && !interactive && config.questionCount > 0 && phase === 'pitch' && <div className="stage-note">Your panel will ask follow-up questions after your pitch.</div>}
           </section>
           <section className="transcript-card">
             <span className="eyebrow blue">Live transcript</span>
@@ -533,7 +563,17 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
               </div>
             )}
 
-            {phase === 'pitch' && <div className="panel-status">{over ? 'Time is up. Wrap up when ready.' : 'The panel is listening'}</div>}
+            {liveLine ? (
+              <div className="question-card" aria-live="polite">
+                <div className="who">{liveName}</div>
+                <div>
+                  {liveLine.spoken}
+                  <span className="faint"> {liveLine.text.slice(liveLine.spoken.length)}</span>
+                </div>
+              </div>
+            ) : (
+              phase === 'pitch' && <div className="panel-status">{interactive ? 'The panel joins in as you go' : over ? 'Time is up. Wrap up when ready.' : 'The panel is listening'}</div>
+            )}
           </section>
 
           {phase === 'pitch' && (
@@ -560,16 +600,19 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
         <div className="clock">
           <div>
             <span className={`timer ${over ? 'over' : ''}`}>{formatTime(shownTime)}</span>
-            <span className="of">/ {formatTime(config.pitchSeconds)}</span>
+            {!interactive && <span className="of">/ {formatTime(config.pitchSeconds)}</span>}
             <span className="phase">
-              {phase === 'pitch' && (over ? 'Time is up. Wrap up when ready.' : 'The panel is listening')}
+              {phase === 'pitch' &&
+                (interactive ? 'Interactive session: the panel joins in as you go' : over ? 'Time is up. Wrap up when ready.' : 'The panel is listening')}
               {phase === 'qna' && (mode === 'spoken' ? 'Answer aloud. The next question comes when you finish.' : 'Answer aloud. The panelist will follow up if needed.')}
               {notice && <span className="faint"> · {notice}</span>}
             </span>
           </div>
-          <div className="timer-track" aria-hidden>
-            <div className={over ? 'over' : ''} style={{ width: `${Math.min(100, (shownTime / Math.max(config.pitchSeconds, 1)) * 100)}%` }} />
-          </div>
+          {!interactive && (
+            <div className="timer-track" aria-hidden>
+              <div className={over ? 'over' : ''} style={{ width: `${Math.min(100, (shownTime / Math.max(config.pitchSeconds, 1)) * 100)}%` }} />
+            </div>
+          )}
         </div>
         {slides.length > 0 && (
           <div className="row" style={{ gap: 4 }}>
@@ -590,9 +633,15 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
             <button className="btn plain" onClick={togglePause}>
               {paused ? 'Resume' : 'Pause'}
             </button>
-            <button className="btn primary" onClick={() => void endPitch()}>
-              {config.questionCount ? 'End pitch & take questions' : 'End pitch'}
-            </button>
+            {interactive ? (
+              <button className="btn primary" onClick={() => void finish()}>
+                Finish and see report
+              </button>
+            ) : (
+              <button className="btn primary" onClick={() => void endPitch()}>
+                {config.questionCount ? 'End pitch & take questions' : 'End pitch'}
+              </button>
+            )}
           </>
         )}
         {phase === 'qna' && (

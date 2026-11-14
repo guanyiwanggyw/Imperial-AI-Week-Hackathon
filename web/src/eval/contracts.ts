@@ -160,6 +160,27 @@ export interface ContentEvaluation {
   coherency_score: number
 }
 
+/** One recorded camera frame. Coordinates are integers 0–999, x and y interleaved; -1 = not visible. */
+export interface LandmarkTrackFrame {
+  t: number
+  /** Face points, in the order of LandmarkTrack.faceIdx. */
+  f: number[] | null
+  /** Hands, 21 points each. */
+  h: number[][]
+  /** Upper-body pose points, in the order of LandmarkTrack.poseIdx. */
+  p: number[] | null
+}
+
+/** Face, hand and pose landmarks over time (~7 Hz), for drawing the tracking over the recording. */
+export interface LandmarkTrack {
+  version: 1
+  /** Which of the 478 face-mesh points are stored (outline, eyes, brows, lips, irises). */
+  faceIdx: number[]
+  /** Which of the 33 pose points are stored (upper body). */
+  poseIdx: number[]
+  frames: LandmarkTrackFrame[]
+}
+
 /** Everything the evaluation produces for one session. Stored on SessionData.evaluation. */
 export interface EvaluationResult {
   version: 1
@@ -183,4 +204,6 @@ export interface EvaluationResult {
   coaching: { top3: string[]; summary: string }
   segments: SegmentNote[]
   calibration: Calibration | null
+  /** Landmarks for the playback overlay. Absent on older sessions. */
+  landmarks?: LandmarkTrack
 }

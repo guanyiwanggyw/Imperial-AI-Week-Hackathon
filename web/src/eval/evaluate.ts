@@ -4,7 +4,7 @@
 import { errorText } from '../api'
 import type { Report, SessionData } from '../types'
 import { assembleEvaluation, TIPS } from './assemble'
-import type { AgentTurn, Calibration, ContentEvaluation, EvaluationResult, FeedbackEvent, Phrase, SampleX, SegmentNote } from './contracts'
+import type { AgentTurn, Calibration, ContentEvaluation, EvaluationResult, FeedbackEvent, LandmarkTrack, Phrase, SampleX, SegmentNote } from './contracts'
 import { finalJudge, transcriptLines } from './judge'
 import { averageScore, bestMoment, deliveryScores, deliveryStats } from './metrics'
 import { T } from './thresholds'
@@ -18,6 +18,7 @@ export interface EvalCapture {
   ruleEvents: FeedbackEvent[]
   segments: SegmentNote[]
   calibration: Calibration | null
+  landmarks?: LandmarkTrack
 }
 
 /** Content dimension weights within the content score. */
@@ -83,6 +84,7 @@ export async function buildReport(session: SessionData, capture: EvalCapture | n
     ruleEvents: capture?.ruleEvents ?? [],
     segments: capture?.segments ?? [],
     calibration: capture?.calibration ?? null,
+    landmarks: capture?.landmarks,
     duration: session.duration,
     pitchEnd: session.pitchEnd,
     slideTexts: session.config.slides.map((s) => s.text),

@@ -7,6 +7,32 @@
 
 ## Log
 
+### 2026-11-14: face and body tracking drawn over the recording (playback only)
+
+- **During the session:** the sampler records a compact landmark track about 7 times a second (`EvaluationResult.landmarks`).
+  - It contains 136 face points (outline, eyes, brows, lips, irises), both hands, and 9 upper-body pose points.
+  - Points are stored as integers 0–999. Worst case is about 600 KB per minute.
+  - It is never drawn live.
+- **On the report screen:** the recording plays with the tracking drawn on top, in sync while playing, paused or scrubbing, and correctly placed in the letterboxed player. Toggles: Face, Hands, Body. Colours match the debug page:
+  - face green = eye contact, red = looking away
+  - hands amber = touching face
+  - forearms red = arms crossed
+  - shoulder line amber = slouching
+
+  Sessions recorded before this change have no track, so no overlay or toggles appear.
+- **New files:**
+  - `web/src/eval/landmarks.ts`: track format, encode and decode, nearest frame.
+  - `web/src/eval/debug/draw.ts`: shared drawing for the live debug overlay and playback.
+  - `web/src/eval/playback/LandmarkPlayback.tsx`: the playback canvas.
+- **Changed:**
+  - `contracts.ts` (`LandmarkTrack`, `EvaluationResult.landmarks?`)
+  - `signals/sampler.ts`, `runtime.ts`, `evaluate.ts`, `assemble.ts`
+  - `debug/TrackingOverlay.tsx`, now using `draw.ts`
+- **Shared file:** `web/src/components/Report.tsx`. The video is wrapped in a positioned div with the overlay, and a "Tracking overlay" toggle row sits under the legend. Nothing else changed.
+- **Verified:**
+  - The round trip is accurate to 0.05% of the frame.
+  - In headless Chrome with a real recording and a synthetic moving figure, the drawing is at the expected position at 10s and 120s (0.327 vs 0.327, 0.626 vs 0.627), inside the letterboxed picture, toggles clear it, and there are no errors.
+
 ### 2026-11-14: optional Anthropic workspace header
 
 - Claude calls failed with `400 … API key is not scoped to a workspace … must include the anthropic-workspace-id header`.

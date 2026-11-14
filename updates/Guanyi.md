@@ -8,6 +8,147 @@ I read the other `updates/*.md` files before each change.
 
 ---
 
+## 2026-11-14: Agents respond to what you say; "Delivery over time" chart redesigned
+
+I read all of `updates/*.md` first and was up to date with `origin/main` (`927e9b3`). Jihu's new entry (tracking overlay on the recording) touches only Jihu's files and the video wrapper in `Report.tsx`; my chart change is in a different section of that file. Alfaa's and Derek's files are empty.
+
+### Agents: human-like and responsive (`web/src/agents/`)
+- **Built-in lines respond to your latest turn** (`fallbackLines.ts`, used now because `.env` has no `ANTHROPIC_API_KEY`):
+  - `analyse()` finds the statement most worth responding to (never your own question), its topic and any figure.
+    - Topics are checked most specific first: competition, money, problem, customers, plan, team, product.
+    - Figures keep their scale and unit: "two hundred thousand pounds", "two hours a day".
+  - `mirror()` echoes it back in the second person, with fillers and the "so", "well", "okay" they leave behind removed: "We already have three paying clinics" → "you already have three paying clinics".
+  - The agent then probes it by topic. Real examples from the check:
+    - "Mm. You said you charge each clinic four hundred pounds a month. How did you land on that price?"
+    - "Three paying clinics. How did you find them?"
+    - "Two hours a day. Yeah, that's a real pain, I can see it."
+    - "Everyone says that about the incumbents." (strict agent)
+  - It sounds like a person: contractions, short reactions ("Mm.", "Right.", "Okay, nice."), warm or cool wording by strictness, and no line repeated.
+- **Addressing the panel:**
+  - Name an agent ("Marcus, what do you think about that price?") and that agent answers next.
+  - Ask the whole panel ("…any thoughts?") and the agent who has spoken least answers.
+  - New line kind `reply`. Replies engage with your figure: "Four hundred pounds a month feels reasonable to me. I'd want to know they'll keep paying it."
+- **Turn-taking:** after an agent replies or comments, nobody else asks for 5 s, so you can respond. Before, Elena asked 2 s after Marcus answered you.
+- **Claude path (when a key is added):**
+  - The drafting prompt now leads with `<latest_from_speaker>`. Every line must respond to it (quote or paraphrase, react before asking, never re-ask what was just answered), in a human register (no "Great question"), with a `reply` that answers direct questions.
+  - Drafts carry how much transcript they saw. A reactive line (follow-up, comment, reply, or a question after an answer) never uses a draft that missed your latest words: it refreshes that one agent's draft first, waiting at most 1.8 s (about a human beat), then falls back to the built-in responsive line. Before, drafts could be one answer behind.
+- **Verified:**
+  - Line checks on six realistic turns, plus the reply and floor cases (named → that agent replies; still talking → nobody; within 5 s of a reply → nobody).
+  - A live headless-Chrome session with Anam and Scribe: Marcus answered when named, Priya picked up "three paying clinics in London", and first audio took 446–637 ms.
+  - The fixes after that run (price-aware reply, the 5 s reaction gap, figures as whole words, no mirrored questions) were re-checked offline.
+  - Claude drafts are still untested (no key).
+
+### "Delivery over time" chart (`web/src/components/DeliveryTimeline.tsx`, replaces `Sparkline.tsx`)
+Users couldn't read the old chart: no time axis or scale, lines spilling past the plot into the value column, an unlabelled band, blank rows with no explanation, and bare numbers. Redesigned following the dataviz guidance: small multiples on one shared time axis, a single series per row (so no legend), solid hairline grid, 2px lines and 8px dots ringed in the surface colour.
+- **Each row:**
+  - A plain "what good looks like" line, e.g. "Look at the panel at least 60% of the time".
+  - A labelled y-scale, and a labelled target band ("target 60%+", "target 130–165").
+  - Readings outside the target show in amber.
+  - A **verdict with an icon and a word**, never colour alone, computed from the same values the chart draws: "✓ 61% · on target", "! 232 wpm · too fast", "✓ 3 deliberate · none hesitant".
+- **Shared x-axis** in m:ss with slide labels, plus "time in the pitch".
+- **Hover:** one crosshair across all rows, and one tooltip listing every signal at that moment.
+- **Playhead and click:** a line marks where the recording is; clicking any row jumps the recording there.
+- **Empty rows explain themselves**, e.g. "Not measured: no clear voice pitch was heard".
+- **"Show as table":** the same values per 10 s window, with an Overall row.
+- **Fixed the overflow:** points sit at the middle of the part of each window inside the pitch, and the SVG is drawn at its measured pixel width (no `preserveAspectRatio="none"`, which also stretched text).
+- **Verified:** headless Chrome on a saved session. No element overflows. A crosshair at 55% across the plot reads 0:12 (an offset bug was fixed). The table shows all windows. Screenshots checked.
+
+### Files
+- **Agents:**
+  - `web/src/agents/fallbackLines.ts` (rewritten), `floorManager.ts` (`reply` kind; `addressedId` / `askedPanel`; reaction gap), `orchestrator.ts` (rewritten: latest turn, addressing, fresh drafts)
+  - `server/src/agents.ts` (prompt, `latest`, `reply`)
+- **Chart:**
+  - New: `web/src/components/DeliveryTimeline.tsx`
+  - Deleted (`git rm`): `web/src/components/Sparkline.tsx`; only `Report.tsx` used it.
+  - `web/src/components/Report.tsx`: only section 4 is replaced, plus a new `deliveryRows()` helper at the bottom of the file. Two unused locals (`fmt1`, `byKey`) are removed.
+  - `web/src/index.css`: the `.timeline` rules are replaced by `.dt-*` rules.
+
+---
+
+## 2026-11-14: Interactive sessions: agents that interrupt, follow up and comment
+
+I read all of `updates/*.md` first, and local `main` was up to date with `origin/main` (`c9de124`). Jihu's latest entries were already covered. Alfaa's and Derek's files are empty, so the agents/orchestrator lane (brief §2, Person 2) had no owner or code. **If one of you is Person 2, this is your lane:** everything is in `web/src/agents/` and built against the brief's `RoomState`, `AgentTurn` and `speak()` contracts. Change whatever you like.
+
+### What it does
+- **Setup → Timing → Session:** "Pitch, then questions" (the existing timed flow, unchanged) or **"Interactive"**: no pitch timer and no fixed Q&A. In interactive mode the timer counts up with no limit, and the main button is "Finish and see report".
+- **The orchestrator** ticks every 300 ms and asks the floor manager whether anyone should speak. Inputs: Jihu's live `RoomState` (`evalRt.roomState`), the transcript phrases, and "claim without evidence" events from the live event engine.
+
+### Floor manager rules (`web/src/agents/floorManager.ts`, pure)
+- **Panel awareness:**
+  - One voice at a time.
+  - Nobody takes the floor within 2 s of another agent's line.
+  - At most one interruption every 45 s across the whole panel.
+  - Nobody talks over an unanswered question. The asker nudges once ("Take your time") after about 9 s; after that, the panel waits.
+- **Polite turns (brief rule):**
+  - When invited ("happy to take any questions…"), agents ask straight away.
+  - Mid-pitch, a breath (silence over 1.2 s and `endOfThoughtProb` over 0.7) occasionally draws a short **comment**: 5% per tick, at most one per 40 s. A clearly longer pause (over 2.4 s) draws a **question**.
+- **Interruptions:** only agents with `canInterrupt`, and only for a reason:
+  - the monologue runs past their `patienceSec`;
+  - `ramblingScore` is over 0.7;
+  - an unsupported claim was made in the last 4 s, if the agent is evidence-minded.
+
+  Never within 20 s of the last agent line; the least patient interrupter goes first.
+- **After an answer:**
+  - The asker **follows up** while it has follow-ups left (chance 45% ± 10% per strictness point).
+  - Otherwise someone else **comments** (30%) or **asks next**.
+  - Agents who have spoken least go first, and the same agent doesn't speak twice in a row unless following up.
+- **Barge-in:** if you talk over an agent (your mouth moving with voice for over 0.5 s, from Jihu's mouth gate, so the panel's own audio doesn't count), the agent stops. **Stubborn** agents (strictness 5) finish their line.
+
+### Agent traits (`web/src/agents/traits.ts`)
+- New optional `Persona` fields: `canInterrupt`, `patienceSec`, `followUps`.
+- Defaults come from strictness:
+
+  | Strictness | Patience | Can interrupt | Follow-ups |
+  | --- | --- | --- | --- |
+  | 1 | 240 s | no | 1 |
+  | 2 | 180 s | no | 1 |
+  | 3 | 150 s | no | 1 |
+  | 4 | 110 s | yes | 2 |
+  | 5 | 75 s | yes, and stubborn | 2 |
+
+  For example, Priya can cut in after 75 s and finishes her lines, while Marcus never interrupts.
+
+### What they say
+- **Claude drafts (brief "Speed" §1):**
+  - `POST /api/agents/drafts` (new `server/src/agents.ts`) makes one batched structured-output call that returns each agent's next `question`, `follow_up`, `comment` and `interjection`. Each is under 20 words, grounded in the transcript, never repeats another agent, and sometimes builds on one by name.
+  - Model `AGENTS_MODEL`, default `claude-haiku-5-5` (the brief's "Claude Haiku"), effort `low`, 15 s timeout, no retries.
+  - Refreshed after each new transcript commit (at most every 2.5 s), and never on the critical path: when an agent gets the floor, its current draft is spoken immediately.
+- **Fallback lines (`fallbackLines.ts`):** used without `ANTHROPIC_API_KEY` (the current `.env` has none) or before the first draft arrives. They follow the agent's focus, pick up figures you used ("You said 200,000. Compared with what?"), switch between warm and cool comments by strictness, and are never repeated.
+- **Speech:** every line goes through `sayLogged()` → `speakAs()` (the agent's own live Anam avatar) and is logged as an `AgentTurn` (Jihu's `agentSpeaking`). A new question calls `evalRt.exchangeEnded()` for the background judge. Captions and the card under the panel reveal the line as it is spoken.
+
+### Verified
+- **Floor manager unit check:** 16 scripted `RoomState` scenarios, all as intended:
+  - Nobody speaks while an agent speaks, or 1 s after one.
+  - No interruption at 30 s; Priya interrupts at 80 s, on rambling, and on a fresh claim.
+  - No second interruption within 45 s.
+  - Mid-pitch breath: usually nothing, sometimes a comment. A 3 s pause gets a question, and an invite gets one at 1 s.
+  - An unanswered question gets a wait, then one nudge.
+  - After an answer: a follow-up, or the next agent's question. Nothing while you're still mid-sentence.
+- **End to end:** headless Chrome, real Scribe, all three investors live on Anam, and a synthesized speaker with pauses, an invite and answers as the fake mic. Sequence:
+  - Marcus asked after the invite.
+  - He followed up on the answer.
+  - He nudged once on silence.
+  - Priya asked at a pause.
+  - Elena pressed on the speaker's "200,000".
+
+  First audio took 528–692 ms per line. Captions, the live card and the open-ended timer all worked.
+- **Typecheck and lint:** clean (web and server).
+- **Not verified:**
+  - Barge-in and interruptions end to end. Barge-in needs a real face (the fake camera has none, and the mic-only fallback has no mouth signal); interruptions need a monologue of 75 s or more. Both are covered by the unit check only.
+  - Claude drafts against the live API (no key). The route typechecks and the client falls back when it returns 503.
+
+### Files
+- **New:**
+  - `web/src/agents/orchestrator.ts`, `floorManager.ts`, `traits.ts` and `fallbackLines.ts`
+  - `server/src/agents.ts` (mounted at `/api/agents` in `server/src/index.ts`)
+- **Changed:**
+  - `web/src/components/Session.tsx`: `interactive` flag; orchestrator start and stop; shared `sayLogged()`, now also used by spoken Q&A; live-line card; timer and controls.
+  - `web/src/components/Setup.tsx`: Session format option.
+  - `web/src/types.ts`: `SessionConfig.format?`; `Persona.canInterrupt?`, `patienceSec?` and `followUps?`.
+  - `server/src/env.ts` (`AGENTS_MODEL`), `.env.example`, `README.md`
+
+---
+
 ## 2026-11-14: Realistic human avatars only; no keys or ids in the UI
 
 I read all of `updates/*.md` first and pulled `c7c32a1`. Jihu's new entries (workspace header, mouth-gated speech, panel-leak filtering, tracking debug page) don't touch my files. Thanks for handling the panel-audio note in `assemble.ts`. Alfaa's and Derek's files are empty.
