@@ -1,0 +1,14 @@
+{
+  "name": "pitch-sparring-partner",
+  "private": true,
+  "description": "Practise a pitch in front of an AI panel that reacts, questions you and writes a report.",
+  "scripts": {
+    "setup": "npm install --prefix server && npm install --prefix web && node scripts/fetch-vision-assets.mjs",
+    "dev:server": "npm run dev --prefix server",
+    "dev:web": "npm run dev --prefix web",
+    "create-agent": "npm run create-agent --prefix server",
+    "build": "npm run build --prefix web",
+    "start": "npm start --prefix server",
+    "typecheck": "npm run typecheck --prefix server && npx --prefix web tsc -b web"
+  }
+}

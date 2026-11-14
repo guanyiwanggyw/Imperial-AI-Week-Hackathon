@@ -1,0 +1,8 @@
+node_modules
+.env
+server/data/sessions/*
+!server/data/sessions/.gitkeep
+web/dist
+web/public/mediapipe
+*.log
+.DS_Store
