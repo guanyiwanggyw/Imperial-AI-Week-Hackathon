@@ -20,12 +20,15 @@ export const env = {
   elevenLabsKey: read("ELEVENLABS_API_KEY"),
   elevenLabsAgentId: read("ELEVENLABS_AGENT_ID"),
   anamKey: read("ANAM_API_KEY"),
+  /** Main avatar and its voice. Optional: the first avatar and English voice on the account are used otherwise. */
   anamAvatarId: read("ANAM_AVATAR_ID"),
-  /** Optional: one Cara 4 avatar per panel seat, comma separated. Falls back to ANAM_AVATAR_ID. */
-  anamAvatarIds: (read("ANAM_AVATAR_IDS") ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+  anamVoiceId: read("ANAM_VOICE_ID"),
   falKey: read("FAL_KEY"),
   falImageModel: read("FAL_IMAGE_MODEL") ?? "fal-ai/flux/schnell",
   falVideoModel: read("FAL_VIDEO_MODEL") ?? "bytedance/seedance-2.0/fast/image-to-video",
+  synthesiaKey: read("SYNTHESIA_API_KEY"),
+  /** Test renders are free but watermarked (30 per day). */
+  synthesiaTest: read("SYNTHESIA_TEST") === "true",
 };
 
 /** Which integrations are configured. The client uses this to pick live or fallback paths. */
@@ -34,7 +37,8 @@ export function integrationStatus() {
     anthropic: Boolean(env.anthropicKey),
     elevenlabs: Boolean(env.elevenLabsKey),
     elevenlabsAgent: Boolean(env.elevenLabsKey && env.elevenLabsAgentId),
-    anam: Boolean(env.anamKey && (env.anamAvatarId || env.anamAvatarIds.length) && env.elevenLabsKey && env.elevenLabsAgentId),
+    anam: Boolean(env.anamKey),
     fal: Boolean(env.falKey),
+    synthesia: Boolean(env.synthesiaKey),
   };
 }

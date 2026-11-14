@@ -18,6 +18,8 @@ export interface Persona {
   look: string
   /** Idle behaviour for the Anam avatar while listening */
   idleStyle: string
+  /** Speaks through the live main avatar. Defaults to the first persona on the panel. */
+  decisionMaker?: boolean
 }
 
 export interface Panel {
@@ -99,6 +101,9 @@ export interface QnaTurn {
   agentScore: number | null
   agentNote: string | null
   toolCalls: string[]
+  /** Spoken turns: who voiced the question and floorOpen → first audio in ms */
+  provider?: 'anam' | 'browser' | 'elevenlabs'
+  latencyMs?: number | null
 }
 
 export interface SessionData {

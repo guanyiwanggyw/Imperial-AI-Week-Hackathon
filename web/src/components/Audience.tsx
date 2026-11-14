@@ -1,4 +1,5 @@
-import type { QnaMode } from '../lib/qna'
+import { Avatar } from '../avatar/Avatar'
+import { useAvatarState, type MainAvatar } from '../avatar/mainAvatar'
 import { REACTION_LABEL } from '../lib/liveEvents'
 import { initials, portraitKey, reactionKey, type Assets } from '../lib/media'
 import type { Persona, Reaction } from '../types'
@@ -16,18 +17,22 @@ interface Props {
   onReactionEnd: (personaId: string) => void
   /** Q&A: the persona currently asking, shown large */
   activeId: string | null
-  speaking: boolean
-  mode: QnaMode | null
+  /** The live main avatar, rendered in the seat of mainId (the decision-maker). */
+  avatar: MainAvatar
+  mainId: string | undefined
+  /** Extra speaking highlight for voices outside the avatar (the ElevenLabs agent mode). */
+  speakingId?: string | null
 }
 
-export const anamVideoId = (personaId: string) => `anam-video-${personaId}`
-
 /**
- * The panel. During the pitch each seat shows a portrait that reacts with a generated clip
- * (or a subtle CSS motion if no clip exists). During Q&A the asking panelist is shown large,
- * as a live Anam avatar when available.
+ * The panel. The decision-maker's seat is the main avatar: a live Anam video that idles while
+ * listening, or the portrait in the voice fallback. Other seats show a portrait that reacts with
+ * a generated clip (or a subtle CSS motion if no clip exists). During Q&A the asking panelist is
+ * shown large, and the seat whose voice is audible is highlighted.
  */
-export function Audience({ personas, assets, backdrop, reactions, onReactionEnd, activeId, speaking, mode }: Props) {
+export function Audience({ personas, assets, backdrop, reactions, onReactionEnd, activeId, avatar, mainId, speakingId }: Props) {
+  const state = useAvatarState(avatar)
+  const avatarLive = state.status === 'live'
   const focus = activeId !== null
   return (
     <div
@@ -39,24 +44,32 @@ export function Audience({ personas, assets, backdrop, reactions, onReactionEnd,
         const r = reactions[p.id]
         const clip = r ? assets[reactionKey(p, r.reaction)] : undefined
         const portrait = assets[portraitKey(p)]
-        const isActive = p.id === activeId
-        const showAnam = isActive && mode === 'anam'
+        const isMain = p.id === mainId
+        // The live avatar has its own idle motion; reaction clips would cover it.
+        const showReaction = r && !(isMain && avatarLive)
+        const face = (
+          <>
+            <div className={`face ${showReaction && !clip ? r.reaction : ''}`} key={showReaction && !clip ? r.id : 'still'} onAnimationEnd={() => onReactionEnd(p.id)}>
+              {portrait ? <img src={portrait} alt="" /> : <div className="initials">{initials(p.name)}</div>}
+            </div>
+            {showReaction && clip && <video key={r.id} src={clip} autoPlay muted playsInline onEnded={() => onReactionEnd(p.id)} onError={() => onReactionEnd(p.id)} />}
+          </>
+        )
         return (
-          <div key={p.id} className={`seat ${isActive ? 'active' : ''} ${isActive && speaking ? 'speaking' : ''}`}>
+          <div key={p.id} className={`seat ${p.id === activeId ? 'active' : ''} ${state.speakingId === p.id || speakingId === p.id ? 'speaking' : ''}`}>
             <div className="tile">
-              <div className={`face ${r && !clip ? r.reaction : ''}`} key={r && !clip ? r.id : 'still'} onAnimationEnd={() => onReactionEnd(p.id)}>
-                {portrait ? <img src={portrait} alt="" /> : <div className="initials">{initials(p.name)}</div>}
-              </div>
-              {clip && !showAnam && (
-                <video key={r!.id} src={clip} autoPlay muted playsInline onEnded={() => onReactionEnd(p.id)} onError={() => onReactionEnd(p.id)} />
+              {isMain ? (
+                <Avatar avatar={avatar} persona={p} portrait={portrait}>
+                  {face}
+                </Avatar>
+              ) : (
+                face
               )}
-              {/* Anam streams into this element; it stays mounted so the SDK can find it by id. */}
-              <video id={anamVideoId(p.id)} autoPlay playsInline style={{ display: showAnam ? 'block' : 'none' }} />
             </div>
             <div className="name">
               {p.name} <span style={{ opacity: 0.75 }}>· {p.role}</span>
             </div>
-            <div className="reaction">{r && !focus ? REACTION_LABEL[r.reaction] : ''}</div>
+            <div className="reaction">{showReaction && !focus ? REACTION_LABEL[r.reaction] : ''}</div>
           </div>
         )
       })}

@@ -15,7 +15,7 @@ import { errorMessage, fetchWithTimeout, safeId, withTimeout } from "./util.js";
  */
 export const mediaRouter = Router();
 
-const GENERATED_DIR = path.join(DATA_DIR, "generated");
+export const GENERATED_DIR = path.join(DATA_DIR, "generated");
 const MANIFEST = path.join(GENERATED_DIR, "manifest.json");
 
 export const REACTIONS = {
@@ -30,7 +30,7 @@ export type Reaction = keyof typeof REACTIONS;
 type Manifest = Record<string, string>; // key -> public url (/generated/...)
 
 let manifestCache: Manifest | null = null;
-async function readManifest(): Promise<Manifest> {
+export async function readManifest(): Promise<Manifest> {
   if (manifestCache) return manifestCache;
   try {
     manifestCache = JSON.parse(await fs.readFile(MANIFEST, "utf8")) as Manifest;
@@ -40,9 +40,13 @@ async function readManifest(): Promise<Manifest> {
   return manifestCache;
 }
 let writeChain: Promise<void> = Promise.resolve();
-async function writeManifestEntry(key: string, url: string) {
+/** Sets (string) or removes (null) manifest entries in one write. */
+export async function updateManifest(entries: Record<string, string | null>) {
   const manifest = await readManifest();
-  manifest[key] = url;
+  for (const [key, url] of Object.entries(entries)) {
+    if (url === null) delete manifest[key];
+    else manifest[key] = url;
+  }
   // Serialise writes so parallel clip jobs never interleave on the same file.
   writeChain = writeChain.then(async () => {
     await fs.mkdir(GENERATED_DIR, { recursive: true });
@@ -50,13 +54,14 @@ async function writeManifestEntry(key: string, url: string) {
   });
   await writeChain;
 }
+const writeManifestEntry = (key: string, url: string) => updateManifest({ [key]: url });
 
 function falClient() {
   if (!env.falKey) throw new Error("fal is not configured");
   return createFalClient({ credentials: env.falKey });
 }
 
-async function download(url: string, fileName: string): Promise<string> {
+export async function download(url: string, fileName: string): Promise<string> {
   const response = await fetchWithTimeout(url, {}, 60_000);
   if (!response.ok) throw new Error(`Download failed: ${response.status}`);
   await fs.mkdir(GENERATED_DIR, { recursive: true });
@@ -83,7 +88,9 @@ async function generateReaction(personaKey: string, reaction: Reaction, portrait
   const fal = falClient();
   // fal needs a reachable URL; our portraits live on this server, so upload the bytes to fal storage first.
   const bytes = await fs.readFile(path.join(GENERATED_DIR, path.basename(portraitUrl)));
-  const imageUrl = await fal.storage.upload(new Blob([new Uint8Array(bytes)], { type: "image/jpeg" }));
+  const ext = path.extname(portraitUrl).slice(1).toLowerCase();
+  const type = ext === "png" ? "image/png" : ext === "webp" ? "image/webp" : "image/jpeg";
+  const imageUrl = await fal.storage.upload(new Blob([new Uint8Array(bytes)], { type }));
   const result = await withTimeout(
     fal.subscribe(env.falVideoModel, {
       input: {

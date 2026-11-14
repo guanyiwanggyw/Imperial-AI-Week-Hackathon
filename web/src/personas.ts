@@ -10,7 +10,7 @@ const VOICES = {
   lily: 'pFZP5JQG7iQjIQuC4Bku',
 }
 
-const PORTRAIT_STYLE =
+export const PORTRAIT_STYLE =
   'Photorealistic head-and-shoulders portrait, looking straight at the camera, neutral attentive expression, soft natural light, plain softly blurred background, 50mm lens.'
 
 function persona(p: Omit<Persona, 'look'> & { look: string }): Persona {
