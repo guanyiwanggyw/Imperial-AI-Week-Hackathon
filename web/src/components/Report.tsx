@@ -3,7 +3,7 @@ import type { Layers } from '../eval/debug/draw'
 import { expressiveness, eyeContactShare, fillerIndices, findPauses, formatTime, wpmBetween, windows } from '../eval/metrics'
 import { LandmarkPlayback } from '../eval/playback/LandmarkPlayback'
 import type { DimensionScore, SessionData } from '../types'
-import { Sparkline } from './Sparkline'
+import { DeliveryTimeline, type TimelineRow, type Verdict } from './DeliveryTimeline'
 
 interface Props {
   session: SessionData
@@ -19,7 +19,6 @@ const DIMENSION_LABELS = {
   composure: 'Composure',
 } as const
 
-const fmt1 = (n: number) => n.toFixed(1)
 /** Scores are 0–100. Reports saved before the switch are 0–10; `k` scales them up. */
 const fmtScore = (n: number, k = 1) => String(Math.round(n * k))
 
@@ -87,7 +86,6 @@ export function Report({ session, localRecording, onNew }: Props) {
   const k = report.scale === 100 ? 1 : 10
   const ev = session.evaluation ?? null
   const recording = session.recordingUrl ?? localRecording
-  const byKey = Object.fromEntries(report.delivery.map((d) => [d.key, d]))
 
   // Markers on the recording timeline.
   const markers = [
@@ -267,52 +265,14 @@ export function Report({ session, localRecording, onNew }: Props) {
       </section>
 
       {/* 4. Delivery timelines */}
-      <section className="section card">
-        <h2>Delivery over time</h2>
-        <p className="faint" style={{ marginBottom: 12 }}>
-          Dashed lines are slide changes. Click any timeline to jump the recording there. Signals that could not be measured reliably are left blank.
-        </p>
-        <div className="timeline">
-          <span className="label">Eye contact</span>
-          <Sparkline points={timelines.eye} duration={session.pitchEnd} min={0} max={1} kind="line" slideTimes={slideTimes} goodBand={[0.6, 1]} format={(v) => `${Math.round(v * 100)}%`} onSeek={seek} />
-          <span className="value">{byKey.eye_contact?.value}</span>
-        </div>
-        <div className="timeline">
-          <span className="label">Gestures</span>
-          <Sparkline points={timelines.gestures} duration={session.pitchEnd} min={0} max={1} kind="line" slideTimes={slideTimes} format={(v) => (v < 0.05 ? 'still' : v > 0.6 ? 'busy' : 'natural')} onSeek={seek} />
-          <span className="value">{byKey.gestures?.value}</span>
-        </div>
-        <div className="timeline">
-          <span className="label">Tonality</span>
-          <Sparkline points={timelines.tonality} duration={session.pitchEnd} min={0} max={1} kind="line" slideTimes={slideTimes} goodBand={[0.45, 1]} format={(v) => (v < 0.35 ? 'monotone' : v < 0.65 ? 'varied' : 'expressive')} onSeek={seek} />
-          <span className="value">{byKey.tonality?.value}</span>
-        </div>
-        <div className="timeline">
-          <span className="label">Pace</span>
-          <Sparkline points={timelines.pace} duration={session.pitchEnd} min={60} max={220} kind="line" slideTimes={slideTimes} goodBand={[130, 165]} format={(v) => `${Math.round(v)} wpm`} onSeek={seek} />
-          <span className="value">{byKey.pace?.value}</span>
-        </div>
-        <div className="timeline">
-          <span className="label">Fillers</span>
-          <Sparkline points={timelines.fillers} duration={session.pitchEnd} min={0} max={Math.max(3, ...timelines.fillers.map((p) => p.value ?? 0))} kind="bars" slideTimes={slideTimes} format={(v) => `${v} filler${v === 1 ? '' : 's'}`} onSeek={seek} />
-          <span className="value">{timelines.fillerTimes.length} total</span>
-        </div>
-        <div className="timeline">
-          <span className="label">Pauses</span>
-          <Sparkline
-            points={[]}
-            duration={session.pitchEnd}
-            min={0}
-            max={1}
-            kind="line"
-            slideTimes={slideTimes}
-            format={() => ''}
-            marks={timelines.hesitations.map((p) => ({ t: p.start, label: `Hesitant pause, ${fmt1(p.end - p.start)} s` }))}
-            onSeek={seek}
-          />
-          <span className="value">{byKey.pauses?.value}</span>
-        </div>
-      </section>
+      <DeliveryTimeline
+        rows={deliveryRows(timelines, session.pitchEnd)}
+        duration={session.pitchEnd}
+        windowSize={timelines.size}
+        slides={slideTimes.map((t, i) => ({ t, label: `Slide ${(session.slideChanges[i + 1]?.slide ?? i + 1) + 1}` }))}
+        playhead={playhead}
+        onSeek={seek}
+      />
 
       {/* 5. Content feedback and Q&A */}
       {report.content && (
@@ -382,4 +342,149 @@ export function Report({ session, localRecording, onNew }: Props) {
       </section>
     </div>
   )
+}
+
+// ---------- delivery over time: rows and plain-language verdicts ----------
+
+type Timelines = {
+  size: number
+  eye: { t: number; value: number | null }[]
+  gestures: { t: number; value: number | null }[]
+  tonality: { t: number; value: number | null }[]
+  pace: { t: number; value: number | null }[]
+  fillers: { t: number; value: number | null }[]
+  fillerTimes: number[]
+  hesitations: { start: number; end: number }[]
+  deliberate: { start: number; end: number }[]
+}
+
+const mean = (pts: { value: number | null }[]) => {
+  const v = pts.map((p) => p.value).filter((x): x is number => x !== null)
+  return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null
+}
+const NOT_MEASURED: Verdict = { status: 'none', text: 'Not measured' }
+
+/** Every row says what good looks like and ends in a verdict computed from the same values it draws. */
+function deliveryRows(tl: Timelines, duration: number): TimelineRow[] {
+  const pct = (v: number) => `${Math.round(v * 100)}%`
+  const eye = mean(tl.eye)
+  const gestures = mean(tl.gestures)
+  const tone = mean(tl.tonality)
+  const pace = mean(tl.pace)
+  const perMin = duration > 0 ? tl.fillerTimes.length / (duration / 60) : 0
+  const paceMax = Math.max(220, ...tl.pace.map((p) => (p.value ?? 0) + 10))
+  const toneWord = (v: number) => (v < 0.35 ? 'monotone' : v < 0.65 ? 'varied' : 'expressive')
+  const gestureWord = (v: number) => (v < 0.05 ? 'still' : v > 0.6 ? 'busy' : 'natural')
+  return [
+    {
+      key: 'eye',
+      label: 'Eye contact',
+      hint: 'Look at the panel at least 60% of the time',
+      kind: 'line',
+      points: tl.eye,
+      min: 0,
+      max: 1,
+      band: [0.6, 1],
+      bandLabel: 'target 60%+',
+      format: pct,
+      emptyText: 'Not measured: the camera could not see your face',
+      verdict:
+        eye === null ? NOT_MEASURED : eye >= 0.6 ? { status: 'good', text: `${pct(eye)} · on target` } : { status: eye >= 0.45 ? 'warn' : 'bad', text: `${pct(eye)} · below the 60% target` },
+    },
+    {
+      key: 'gestures',
+      label: 'Gestures',
+      hint: 'Some natural hand movement, not still, not busy',
+      kind: 'line',
+      points: tl.gestures,
+      min: 0,
+      max: 1,
+      band: [0.05, 0.6],
+      bandLabel: 'natural',
+      format: gestureWord,
+      ticks: [0, 1],
+      emptyText: 'Not measured: hands or face were out of view',
+      verdict:
+        gestures === null
+          ? NOT_MEASURED
+          : gestures < 0.05
+            ? { status: 'warn', text: 'Very still · use your hands a little' }
+            : gestures > 0.6
+              ? { status: 'warn', text: 'Busy · calm your hands' }
+              : { status: 'good', text: 'Natural · on target' },
+    },
+    {
+      key: 'tonality',
+      label: 'Tone of voice',
+      hint: 'Vary your pitch; avoid long flat stretches',
+      kind: 'line',
+      points: tl.tonality,
+      min: 0,
+      max: 1,
+      band: [0.45, 1],
+      bandLabel: 'varied',
+      format: toneWord,
+      ticks: [0, 1],
+      emptyText: 'Not measured: no clear voice pitch was heard',
+      verdict: tone === null ? NOT_MEASURED : tone >= 0.45 ? { status: 'good', text: `${toneWord(tone)} · on target` } : { status: 'warn', text: `${toneWord(tone)} · vary your pitch` },
+    },
+    {
+      key: 'pace',
+      label: 'Pace',
+      hint: 'About 130–165 words a minute',
+      kind: 'line',
+      points: tl.pace,
+      min: 60,
+      max: paceMax,
+      band: [130, 165],
+      bandLabel: 'target 130–165',
+      format: (v) => `${Math.round(v)} wpm`,
+      ticks: [60, paceMax],
+      emptyText: 'Not measured: no transcript',
+      verdict:
+        pace === null
+          ? NOT_MEASURED
+          : pace > 165
+            ? { status: pace > 185 ? 'bad' : 'warn', text: `${Math.round(pace)} wpm · too fast` }
+            : pace < 130
+              ? { status: pace < 110 ? 'bad' : 'warn', text: `${Math.round(pace)} wpm · a bit slow` }
+              : { status: 'good', text: `${Math.round(pace)} wpm · on target` },
+    },
+    {
+      key: 'fillers',
+      label: 'Filler words',
+      hint: '"Um", "uh", "like": under 3 a minute',
+      kind: 'bars',
+      points: tl.fillers,
+      min: 0,
+      max: Math.max(3, ...tl.fillers.map((p) => p.value ?? 0)),
+      band: [0, (3 * tl.size) / 60],
+      bandLabel: 'fine',
+      format: (v) => `${Math.round(v)} filler${Math.round(v) === 1 ? '' : 's'}`,
+      ticks: [0, Math.max(3, ...tl.fillers.map((p) => p.value ?? 0))],
+      verdict:
+        tl.fillerTimes.length === 0
+          ? { status: 'good', text: 'None · great' }
+          : { status: perMin < 3 ? 'good' : perMin < 6 ? 'warn' : 'bad', text: `${tl.fillerTimes.length} total · ${perMin.toFixed(1)} a minute` },
+    },
+    {
+      key: 'pauses',
+      label: 'Pauses',
+      hint: 'Pause after a point, not mid-sentence',
+      kind: 'events',
+      points: [],
+      min: 0,
+      max: 1,
+      format: () => '',
+      ticks: [],
+      events: [
+        ...tl.deliberate.map((p) => ({ t: p.start, label: `Deliberate pause, ${(p.end - p.start).toFixed(1)} s`, good: true })),
+        ...tl.hesitations.map((p) => ({ t: p.start, label: `Hesitant pause, ${(p.end - p.start).toFixed(1)} s`, good: false })),
+      ],
+      verdict:
+        tl.hesitations.length === 0
+          ? { status: 'good', text: tl.deliberate.length ? `${tl.deliberate.length} deliberate · none hesitant` : 'No long pauses' }
+          : { status: 'warn', text: `${tl.hesitations.length} hesitant · ${tl.deliberate.length} deliberate` },
+    },
+  ]
 }

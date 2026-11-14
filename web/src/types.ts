@@ -27,6 +27,12 @@ export interface Persona {
   /** Anam avatar and voice for this agent. Without them the server matches one by gender and look. */
   anamAvatarId?: string
   anamVoiceId?: string
+  /** Interactive mode (web/src/agents): may cut in while the speaker talks. Default: strictness >= 4. */
+  canInterrupt?: boolean
+  /** Seconds of uninterrupted monologue this agent tolerates before cutting in. Default by strictness. */
+  patienceSec?: number
+  /** Follow-ups this agent asks on its own question before letting go. Default by strictness. */
+  followUps?: number
 }
 
 export interface Panel {
@@ -52,6 +58,11 @@ export interface SessionConfig {
   /** 0 means Q&A is off */
   questionCount: number
   context: string
+  /**
+   * timed: solo pitch for pitchSeconds, then questionCount questions.
+   * interactive: no time limits; the agents listen, interrupt, follow up and comment (web/src/agents).
+   */
+  format?: 'timed' | 'interactive'
 }
 
 export interface Word {

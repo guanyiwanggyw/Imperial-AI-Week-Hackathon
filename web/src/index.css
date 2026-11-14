@@ -240,11 +240,6 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .event-list { max-height: 360px; overflow-y: auto; font-size: 13px; }
 .event-list button { display: grid; grid-template-columns: 44px 1fr; gap: 8px; width: 100%; text-align: left; border: 0; background: none; padding: 6px 4px; border-radius: 6px; cursor: pointer; }
 .event-list button:hover { background: var(--surface-2); }
-.timeline { display: grid; grid-template-columns: 110px 1fr 170px; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--border); }
-.timeline:first-of-type { border-top: 0; }
-.timeline svg { width: 100%; height: 44px; display: block; overflow: visible; }
-.timeline .label { font-size: 13px; }
-.timeline .value { font-size: 13px; color: var(--text-2); text-align: right; font-variant-numeric: tabular-nums; }
 .qa { padding: 14px 0; border-top: 1px solid var(--border); display: grid; gap: 6px; }
 .qa:first-child { border-top: 0; padding-top: 0; }
 .qa .q { font-weight: 500; }
@@ -302,3 +297,43 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .anam-tag img { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex: none; }
 .anam-tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
+/* Delivery over time (components/DeliveryTimeline.tsx) */
+.dt { position: relative; touch-action: none; }
+.dt-row { display: grid; grid-template-columns: 190px minmax(0, 1fr) 200px; gap: 16px; align-items: center; padding: 6px 0; border-top: 1px solid var(--border); }
+.dt-row:first-child { border-top: 0; }
+.dt-axis-row { border-top: 0; padding-top: 0; align-items: start; }
+.dt-label { font-size: 14px; line-height: 1.3; }
+.dt-label .small { font-size: 12px; margin-top: 2px; }
+.dt-plot { min-width: 0; cursor: crosshair; }
+.dt-plot svg, .dt-axis-row svg { display: block; overflow: hidden; }
+.dt-band { fill: var(--good); opacity: 0.1; }
+.dt-band-label { font-size: 10px; fill: var(--text-3); }
+.dt-grid { stroke: var(--border); stroke-width: 1; }
+.dt-slide { stroke: var(--text-3); stroke-width: 1; opacity: 0.35; }
+.dt-tick { font-size: 10px; fill: var(--text-3); font-variant-numeric: tabular-nums; }
+.dt-slide-label { font-size: 10px; fill: var(--text-3); }
+.dt-empty { font-size: 12px; fill: var(--text-3); }
+.dt-line { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.dt-dot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+.dt-dot.off { fill: var(--warn); }
+.dt-dot.hover { fill: var(--surface); stroke: var(--accent); stroke-width: 2; }
+.dt-bar { fill: var(--accent); }
+.dt-bar.off { fill: var(--warn); }
+.dt-playhead { stroke: var(--text-2); stroke-width: 1; }
+.dt-crosshair { stroke: var(--text); stroke-width: 1; opacity: 0.5; }
+.dt-verdict { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
+.dt-icon { flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700; color: #fff; background: var(--text-3); }
+.dt-verdict.good .dt-icon { background: var(--good); }
+.dt-verdict.warn .dt-icon { background: var(--warn); }
+.dt-verdict.bad .dt-icon { background: var(--bad); }
+.dt-tip { position: fixed; z-index: 30; pointer-events: none; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); border-radius: var(--radius-sm); padding: 8px 10px; font-size: 12px; min-width: 180px; }
+.dt-tip-time { color: var(--text-3); margin-bottom: 4px; font-variant-numeric: tabular-nums; }
+.dt-tip-row { display: flex; justify-content: space-between; gap: 12px; }
+.dt-tip-row strong { color: var(--text); font-weight: 600; }
+.dt-tip-row span { color: var(--text-3); }
+.dt-table-wrap { overflow-x: auto; }
+.dt-table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+.dt-table th, .dt-table td { text-align: left; padding: 6px 8px; border-top: 1px solid var(--border); }
+.dt-table th { color: var(--text-3); font-weight: 500; border-top: 0; }
+.dt-table-total td { color: var(--text); font-weight: 600; }
+@media (max-width: 760px) { .dt-row { grid-template-columns: 1fr; gap: 6px; } }

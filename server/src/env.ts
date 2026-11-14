@@ -17,6 +17,8 @@ export const env = {
   port: Number(read("PORT") ?? 8787),
   anthropicKey: read("ANTHROPIC_API_KEY"),
   anthropicModel: read("ANTHROPIC_MODEL") ?? "claude-opus-5-5",
+  /** Fast model for the interactive panel's background drafts (brief: "Groq or Claude Haiku"). */
+  agentsModel: read("AGENTS_MODEL") ?? "claude-haiku-5-5",
   elevenLabsKey: read("ELEVENLABS_API_KEY"),
   elevenLabsAgentId: read("ELEVENLABS_AGENT_ID"),
   anamKey: read("ANAM_API_KEY"),

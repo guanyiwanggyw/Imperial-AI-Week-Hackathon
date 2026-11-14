@@ -64,6 +64,8 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
   const [drag, setDrag] = useState(false)
   const [pitchSeconds, setPitchSeconds] = useState(DEFAULT_PITCH_SECONDS)
   const [questionCount, setQuestionCount] = useState(DEFAULT_QUESTION_COUNT)
+  // timed: solo pitch, then Q&A. interactive: no time limits; the panel joins in as you go.
+  const [format, setFormat] = useState<'timed' | 'interactive'>('timed')
   const [context, setContext] = useState('')
   const [showContext, setShowContext] = useState(false)
   const [assets, setAssets] = useState<Assets>({})
@@ -401,25 +403,45 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
           <section className="card stack">
             <h2>Timing</h2>
             <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
-              <span className="muted">Pitch length</span>
+              <span className="muted">Session</span>
               <div className="segmented">
-                {PITCH_OPTIONS.map((s) => (
-                  <button key={s} className={pitchSeconds === s ? 'on' : ''} onClick={() => setPitchSeconds(s)}>
-                    {s / 60} min
-                  </button>
-                ))}
+                <button className={format === 'timed' ? 'on' : ''} onClick={() => setFormat('timed')}>
+                  Pitch, then questions
+                </button>
+                <button className={format === 'interactive' ? 'on' : ''} onClick={() => setFormat('interactive')}>
+                  Interactive
+                </button>
               </div>
             </div>
-            <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
-              <span className="muted">Questions afterwards</span>
-              <div className="segmented">
-                {QUESTION_OPTIONS.map((n) => (
-                  <button key={n} className={questionCount === n ? 'on' : ''} onClick={() => setQuestionCount(n)}>
-                    {n === 0 ? 'Off' : n}
-                  </button>
-                ))}
+            {format === 'interactive' ? (
+              <p className="muted small" style={{ margin: 0 }}>
+                No timer and no fixed Q&amp;A. Talk to the panel as you would in a real meeting: they ask when you pause, follow up on your answers,
+                react as you go, and the less patient ones may cut in if you run long. Finish whenever you like.
+              </p>
+            ) : (
+              <>
+              <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <span className="muted">Pitch length</span>
+                <div className="segmented">
+                  {PITCH_OPTIONS.map((s) => (
+                    <button key={s} className={pitchSeconds === s ? 'on' : ''} onClick={() => setPitchSeconds(s)}>
+                      {s / 60} min
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+              <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
+                <span className="muted">Questions afterwards</span>
+                <div className="segmented">
+                  {QUESTION_OPTIONS.map((n) => (
+                    <button key={n} className={questionCount === n ? 'on' : ''} onClick={() => setQuestionCount(n)}>
+                      {n === 0 ? 'Off' : n}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              </>
+            )}
             {showContext ? (
               <label className="field">
                 Context for the panel, such as judging criteria, a job description or a README
@@ -496,7 +518,7 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
           className="btn primary large"
           disabled={!canStart}
           // The session uses exactly the Anam avatars shown here.
-          onClick={() => onStart({ panel: { ...panel, personas: withAnamIds(panel.personas, anamMatches) }, slides, deckName, pitchSeconds, questionCount, context: context.trim() })}
+          onClick={() => onStart({ panel: { ...panel, personas: withAnamIds(panel.personas, anamMatches) }, slides, deckName, pitchSeconds, questionCount, context: context.trim(), format })}
         >
           Start pitch
         </button>
