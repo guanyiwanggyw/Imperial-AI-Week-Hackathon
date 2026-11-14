@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { errorText, getJson, type Status } from '../api'
 import { AnamTag } from '../avatar/AnamTag'
+import { Steps, TopNav } from './Chrome'
 import { matchAnamAvatars, withAnamIds, type AnamMatch } from '../avatar/anamMatch'
 import { loadSlides } from '../lib/pdf'
 import {
@@ -65,7 +66,6 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
   const [pitchSeconds, setPitchSeconds] = useState(DEFAULT_PITCH_SECONDS)
   const [questionCount, setQuestionCount] = useState(DEFAULT_QUESTION_COUNT)
   const [context, setContext] = useState('')
-  const [showContext, setShowContext] = useState(false)
   const [assets, setAssets] = useState<Assets>({})
   const [mediaBusy, setMediaBusy] = useState<string | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
@@ -230,277 +230,278 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
   const canStart = Boolean(stream) && !pdfState.busy && panel.personas.length > 0
 
   return (
-    <div className="page">
-      <div className="header">
-        <h1>Pitch sparring partner</h1>
-        <span className="muted">Practise in front of a panel that listens, reacts and asks the hard questions.</span>
-      </div>
+    <div className="app">
+      <TopNav
+        active="practice"
+        onPast={history.length ? () => document.getElementById('past-sessions')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) : undefined}
+        onFeedback={history.length ? () => onOpenSession(history[0].id) : undefined}
+      />
+      <div className="rp-wrap">
+        <Steps current={0} />
 
-      <div className="setup-grid">
-        <div className="stack" style={{ gap: 20 }}>
-          <section className="card stack">
-            <h2>Audience</h2>
-            <div className="panel-options">
-              {[...PANELS, custom].map((p) => (
-                <button key={p.id} className={`panel-option ${p.id === panelId ? 'on' : ''}`} onClick={() => setPanelId(p.id)}>
-                  <strong>{p.name}</strong>
-                  <span className="faint">{p.setting}</span>
-                  <span className="faces">
-                    {p.personas.map((x) => (
-                      <span key={x.id} className="avatar">
-                        {assets[portraitKey(x)] ? <img src={assets[portraitKey(x)]} alt="" /> : initials(x.name)}
-                      </span>
-                    ))}
-                  </span>
-                </button>
-              ))}
-            </div>
-            <p className="muted small">{panel.description}</p>
+        <div className="setup-grid">
+          <div className="stack" style={{ gap: 24 }}>
+            <section className="card setup-card">
+              <h2 className="title">Tell us about your pitch</h2>
+              <p className="muted">Give the panel a little context before you begin.</p>
 
-            {panelId === 'custom' ? (
-              <div>
-                {custom.personas.map((p, i) => (
-                  <div key={p.id} className="persona-edit">
-                    <span className="avatar" style={{ width: 56, height: 56, cursor: assets[introKey(p)] ? 'pointer' : undefined }} onClick={() => assets[introKey(p)] && setPlayingIntro(p)} title={assets[introKey(p)] ? 'Play intro' : undefined}>
-                      {assets[portraitKey(p)] ? <img src={assets[portraitKey(p)]} alt="" /> : initials(p.name)}
+              <h3 className="field-label">Who are you pitching to?</h3>
+              <div className="panel-options">
+                {[...PANELS, custom].map((p) => (
+                  <button key={p.id} className={`panel-option ${p.id === panelId ? 'on' : ''}`} aria-pressed={p.id === panelId} onClick={() => setPanelId(p.id)}>
+                    <span>
+                      <strong>{p.name}</strong>
+                      <span className="faint">{p.setting}</span>
                     </span>
-                    <div className="stack" style={{ gap: 8 }}>
-                      <div className="row">
-                        <input type="text" value={p.name} onChange={(e) => updatePersona(i, { name: e.target.value })} aria-label="Name" />
-                        <input type="text" value={p.role} onChange={(e) => updatePersona(i, { role: e.target.value })} aria-label="Role" />
-                      </div>
-                      <input type="text" value={p.personality} onChange={(e) => updatePersona(i, { personality: e.target.value })} aria-label="Personality" />
-                      <div className="row">
-                        <input
-                          type="text"
-                          value={p.focus.join(', ')}
-                          onChange={(e) => updatePersona(i, { focus: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
-                          aria-label="Focus areas"
-                          placeholder="Focus areas, comma separated"
-                        />
-                        <label className="row faint" style={{ flex: 'none', gap: 6 }}>
-                          Strictness
-                          <input type="range" min={1} max={5} value={p.strictness} onChange={(e) => updatePersona(i, { strictness: Number(e.target.value) })} />
-                        </label>
-                      </div>
-                      <input type="text" value={p.look} onChange={(e) => updatePersona(i, { look: e.target.value })} aria-label="Appearance for the portrait" placeholder="Appearance, used to generate the portrait" />
-                      {/* A realistic live avatar is matched to the appearance; no ids are shown or typed here. */}
-                      {status.anam && <AnamTag match={anamMatches?.[i]} />}
-                    </div>
-                  </div>
+                    {p.id === panelId && <i aria-hidden />}
+                  </button>
                 ))}
-                <div className="row" style={{ marginTop: 8 }}>
-                  {custom.personas.length < 3 && (
-                    <button className="btn quiet" onClick={() => setCustom((c) => ({ ...c, personas: [...c.personas, blankPersona(c.personas.length + 1)] }))}>
-                      Add panelist
-                    </button>
-                  )}
-                  {custom.personas.length > 1 && (
-                    <button className="btn quiet" onClick={() => setCustom((c) => ({ ...c, personas: c.personas.slice(0, -1) }))}>
-                      Remove last
-                    </button>
-                  )}
-                </div>
               </div>
-            ) : (
-              <div className="stack" style={{ gap: 8 }}>
-                {panel.personas.map((p, i) => (
-                  <div key={p.id} className="row">
-                    <span className="avatar" style={{ width: 36, height: 36 }}>
-                      {assets[portraitKey(p)] ? <img src={assets[portraitKey(p)]} alt="" /> : initials(p.name)}
-                    </span>
-                    <div style={{ flex: 1 }}>
-                      <div>
-                        {p.name} <span className="faint">· {p.role}</span>
-                      </div>
-                      <div className="faint">{p.personality}</div>
-                      {status.anam && <AnamTag match={anamMatches?.[i]} />}
-                    </div>
-                    {assets[introKey(p)] && (
-                      <button className="btn quiet small" onClick={() => setPlayingIntro(p)} aria-label={`Play ${p.name}'s intro`}>
-                        ▶ Intro
+
+              <h3 className="field-label">Slides</h3>
+              <div
+                className={`dropzone ${drag ? 'drag' : ''}`}
+                onClick={() => fileInput.current?.click()}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setDrag(true)
+                }}
+                onDragLeave={() => setDrag(false)}
+                onDrop={(e) => {
+                  e.preventDefault()
+                  setDrag(false)
+                  void onFile(e.dataTransfer.files[0])
+                }}
+                role="button"
+                tabIndex={0}
+              >
+                {pdfState.busy ? pdfState.progress : deckName ? `${deckName} · ${slides.length} slides · choose another` : 'Drop a PDF here or click to choose. Optional.'}
+              </div>
+              <input ref={fileInput} type="file" accept="application/pdf" hidden onChange={(e) => void onFile(e.target.files?.[0])} />
+              {pdfState.error && <div className="notice">{pdfState.error}</div>}
+              {slides.length > 0 && (
+                <div className="thumbs">
+                  {slides.map((s) => (
+                    <img key={s.index} src={s.image} alt={`Slide ${s.index + 1}`} />
+                  ))}
+                </div>
+              )}
+              <h3 className="field-label">Context for the panel</h3>
+              <textarea value={context} onChange={(e) => setContext(e.target.value)} rows={4} placeholder="Paste judging criteria, a job description or a README…" aria-label="Context for the panel" />
+              <p className="hint">Optional. The panel uses it to ask sharper questions.</p>
+
+              <div className="settings">
+                <div>
+                  <span>Pitch time</span>
+                  <div className="segmented">
+                    {PITCH_OPTIONS.map((s) => (
+                      <button key={s} className={pitchSeconds === s ? 'on' : ''} onClick={() => setPitchSeconds(s)}>
+                        {s / 60} min
                       </button>
-                    )}
+                    ))}
                   </div>
-                ))}
-              </div>
-            )}
-
-            {playingIntro && assets[introKey(playingIntro)] && (
-              <div className="intro-player">
-                <video key={playingIntro.id} src={assets[introKey(playingIntro)]} autoPlay playsInline controls onEnded={() => setPlayingIntro(null)} />
-                <div className="row small">
-                  <span className="faint">{playingIntro.name} says hello</span>
-                  <span className="spacer" />
-                  <button className="btn quiet" onClick={() => setPlayingIntro(null)}>
-                    Close
-                  </button>
+                </div>
+                <div>
+                  <span>Follow-up questions</span>
+                  <div className="segmented">
+                    {QUESTION_OPTIONS.map((n) => (
+                      <button key={n} className={questionCount === n ? 'on' : ''} onClick={() => setQuestionCount(n)}>
+                        {n === 0 ? 'Off' : n}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-            )}
+            </section>
 
-            {(status.fal || status.synthesia) && (
-              <div className="row small" style={{ flexWrap: 'wrap' }}>
-                {status.synthesia && (
-                  <button
-                    className="btn"
-                    onClick={() => void generateSynthesiaFaces()}
-                    disabled={Boolean(mediaBusy) || hasIntros}
-                    title="Render a Synthesia avatar and a spoken intro for each panelist. Takes a few minutes."
-                  >
-                    {hasIntros ? 'Synthesia faces ready' : 'Synthesia faces'}
-                  </button>
+            <section className="card stack">
+              <h2>Camera and microphone</h2>
+              <div className="preview">
+                <video ref={preview} autoPlay muted playsInline />
+                {!stream && (
+                  <div className="empty">
+                    <div className="stack" style={{ alignItems: 'center' }}>
+                      <span>{streamError ?? 'The panel needs to see and hear you.'}</span>
+                      <button className="btn" onClick={onRequestMedia}>
+                        Allow camera and microphone
+                      </button>
+                    </div>
+                  </div>
                 )}
-                {status.fal && (
-                  <>
-                    <button className="btn quiet" onClick={generatePanelImages} disabled={Boolean(mediaBusy)}>
-                      {hasPortraits ? 'Regenerate missing images' : 'Generate room and portraits'}
-                    </button>
-                    <button className="btn quiet" onClick={generateReactions} disabled={Boolean(mediaBusy) || !hasPortraits}>
-                      Animate reactions
-                    </button>
-                  </>
+              </div>
+              {stream && (
+                <div className="stack" style={{ gap: 6 }}>
+                  <span className="faint">Say something to check your microphone</span>
+                  <div className="level">
+                    <div style={{ width: `${Math.round(level * 100)}%` }} />
+                  </div>
+                </div>
+              )}
+              <p className="faint">Video is analysed on this device and never uploaded for analysis.</p>
+            </section>
+          </div>
+
+          <div className="stack" style={{ gap: 24 }}>
+            <section className="card setup-card">
+              <h2 className="title">Meet your panel</h2>
+              <p className="muted">{panel.description}</p>
+
+              <div className="experts">
+                {panelId === 'custom' ? (
+                  <div>
+                    {custom.personas.map((p, i) => (
+                      <div key={p.id} className="persona-edit">
+                        <span className="avatar" style={{ width: 56, height: 56, cursor: assets[introKey(p)] ? 'pointer' : undefined }} onClick={() => assets[introKey(p)] && setPlayingIntro(p)} title={assets[introKey(p)] ? 'Play intro' : undefined}>
+                          {assets[portraitKey(p)] ? <img src={assets[portraitKey(p)]} alt="" /> : initials(p.name)}
+                        </span>
+                        <div className="stack" style={{ gap: 8 }}>
+                          <div className="row">
+                            <input type="text" value={p.name} onChange={(e) => updatePersona(i, { name: e.target.value })} aria-label="Name" />
+                            <input type="text" value={p.role} onChange={(e) => updatePersona(i, { role: e.target.value })} aria-label="Role" />
+                          </div>
+                          <input type="text" value={p.personality} onChange={(e) => updatePersona(i, { personality: e.target.value })} aria-label="Personality" />
+                          <div className="row">
+                            <input
+                              type="text"
+                              value={p.focus.join(', ')}
+                              onChange={(e) => updatePersona(i, { focus: e.target.value.split(',').map((s) => s.trim()).filter(Boolean) })}
+                              aria-label="Focus areas"
+                              placeholder="Focus areas, comma separated"
+                            />
+                            <label className="row faint" style={{ flex: 'none', gap: 6 }}>
+                              Strictness
+                              <input type="range" min={1} max={5} value={p.strictness} onChange={(e) => updatePersona(i, { strictness: Number(e.target.value) })} />
+                            </label>
+                          </div>
+                          <input type="text" value={p.look} onChange={(e) => updatePersona(i, { look: e.target.value })} aria-label="Appearance for the portrait" placeholder="Appearance, used to generate the portrait" />
+                          {/* A realistic live avatar is matched to the appearance; no ids are shown or typed here. */}
+                          {status.anam && <AnamTag match={anamMatches?.[i]} />}
+                        </div>
+                      </div>
+                    ))}
+                    <div className="row" style={{ marginTop: 8 }}>
+                      {custom.personas.length < 3 && (
+                        <button className="btn quiet" onClick={() => setCustom((c) => ({ ...c, personas: [...c.personas, blankPersona(c.personas.length + 1)] }))}>
+                          Add panelist
+                        </button>
+                      )}
+                      {custom.personas.length > 1 && (
+                        <button className="btn quiet" onClick={() => setCustom((c) => ({ ...c, personas: c.personas.slice(0, -1) }))}>
+                          Remove last
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  panel.personas.map((p, i) => (
+                    <div key={p.id} className={`expert tone-${i % 3}`}>
+                      {assets[portraitKey(p)] ? (
+                        <span className="avatar">
+                          <img src={assets[portraitKey(p)]} alt="" />
+                        </span>
+                      ) : (
+                        <span className="no">{String(i + 1).padStart(2, '0')}</span>
+                      )}
+                      <div>
+                        <strong>{p.name}</strong>
+                        <span className="role">{p.role}</span>
+                        <span className="desc">{p.personality}</span>
+                        {status.anam && <AnamTag match={anamMatches?.[i]} />}
+                        {assets[introKey(p)] && (
+                          <button className="link" onClick={() => setPlayingIntro(p)} aria-label={`Play ${p.name}'s intro`}>
+                            ▶ Play intro
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))
                 )}
-                <span className="faint">{mediaBusy ?? (clipCount ? `${clipCount} reaction clips ready` : '')}</span>
               </div>
-            )}
-            {mediaError && <div className="notice">{mediaError}</div>}
-          </section>
 
-          <section className="card stack">
-            <h2>Slides</h2>
-            <div
-              className={`dropzone ${drag ? 'drag' : ''}`}
-              onClick={() => fileInput.current?.click()}
-              onDragOver={(e) => {
-                e.preventDefault()
-                setDrag(true)
-              }}
-              onDragLeave={() => setDrag(false)}
-              onDrop={(e) => {
-                e.preventDefault()
-                setDrag(false)
-                void onFile(e.dataTransfer.files[0])
-              }}
-              role="button"
-              tabIndex={0}
-            >
-              {pdfState.busy ? pdfState.progress : deckName ? `${deckName} · ${slides.length} slides · choose another` : 'Drop a PDF here or click to choose. Optional.'}
-            </div>
-            <input ref={fileInput} type="file" accept="application/pdf" hidden onChange={(e) => void onFile(e.target.files?.[0])} />
-            {pdfState.error && <div className="notice">{pdfState.error}</div>}
-            {slides.length > 0 && (
-              <div className="thumbs">
-                {slides.map((s) => (
-                  <img key={s.index} src={s.image} alt={`Slide ${s.index + 1}`} />
-                ))}
-              </div>
-            )}
-          </section>
-
-          <section className="card stack">
-            <h2>Timing</h2>
-            <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
-              <span className="muted">Pitch length</span>
-              <div className="segmented">
-                {PITCH_OPTIONS.map((s) => (
-                  <button key={s} className={pitchSeconds === s ? 'on' : ''} onClick={() => setPitchSeconds(s)}>
-                    {s / 60} min
-                  </button>
-                ))}
-              </div>
-            </div>
-            <div className="row" style={{ justifyContent: 'space-between', flexWrap: 'wrap' }}>
-              <span className="muted">Questions afterwards</span>
-              <div className="segmented">
-                {QUESTION_OPTIONS.map((n) => (
-                  <button key={n} className={questionCount === n ? 'on' : ''} onClick={() => setQuestionCount(n)}>
-                    {n === 0 ? 'Off' : n}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {showContext ? (
-              <label className="field">
-                Context for the panel, such as judging criteria, a job description or a README
-                <textarea value={context} onChange={(e) => setContext(e.target.value)} rows={5} autoFocus />
-              </label>
-            ) : (
-              <button className="btn quiet" style={{ alignSelf: 'flex-start' }} onClick={() => setShowContext(true)}>
-                Add context for the panel
-              </button>
-            )}
-          </section>
-        </div>
-
-        <div className="stack" style={{ gap: 20 }}>
-          <section className="card stack">
-            <h2>Camera and microphone</h2>
-            <div className="preview">
-              <video ref={preview} autoPlay muted playsInline />
-              {!stream && (
-                <div className="empty">
-                  <div className="stack" style={{ alignItems: 'center' }}>
-                    <span>{streamError ?? 'The panel needs to see and hear you.'}</span>
-                    <button className="btn" onClick={onRequestMedia}>
-                      Allow camera and microphone
+              {playingIntro && assets[introKey(playingIntro)] && (
+                <div className="intro-player">
+                  <video key={playingIntro.id} src={assets[introKey(playingIntro)]} autoPlay playsInline controls onEnded={() => setPlayingIntro(null)} />
+                  <div className="row small">
+                    <span className="faint">{playingIntro.name} says hello</span>
+                    <span className="spacer" />
+                    <button className="btn quiet" onClick={() => setPlayingIntro(null)}>
+                      Close
                     </button>
                   </div>
                 </div>
               )}
-            </div>
-            {stream && (
-              <div className="stack" style={{ gap: 6 }}>
-                <span className="faint">Say something to check your microphone</span>
-                <div className="level">
-                  <div style={{ width: `${Math.round(level * 100)}%` }} />
+
+              {(status.fal || status.synthesia) && (
+                <div className="row small" style={{ flexWrap: 'wrap' }}>
+                  {status.synthesia && (
+                    <button
+                      className="btn"
+                      onClick={() => void generateSynthesiaFaces()}
+                      disabled={Boolean(mediaBusy) || hasIntros}
+                      title="Render a Synthesia avatar and a spoken intro for each panelist. Takes a few minutes."
+                    >
+                      {hasIntros ? 'Synthesia faces ready' : 'Synthesia faces'}
+                    </button>
+                  )}
+                  {status.fal && (
+                    <>
+                      <button className="btn quiet" onClick={generatePanelImages} disabled={Boolean(mediaBusy)}>
+                        {hasPortraits ? 'Regenerate missing images' : 'Generate room and portraits'}
+                      </button>
+                      <button className="btn quiet" onClick={generateReactions} disabled={Boolean(mediaBusy) || !hasPortraits}>
+                        Animate reactions
+                      </button>
+                    </>
+                  )}
+                  <span className="faint">{mediaBusy ?? (clipCount ? `${clipCount} reaction clips ready` : '')}</span>
                 </div>
-              </div>
-            )}
-            <p className="faint">Video is analysed on this device and never uploaded for analysis.</p>
-          </section>
+              )}
+              {mediaError && <div className="notice">{mediaError}</div>}
 
-          <section className="card stack">
-            <h3>Services</h3>
-            <div className="row small" style={{ flexWrap: 'wrap', gap: 8 }}>
-              <span className="chip"><i className={`dot ${status.elevenlabs ? 'on' : ''}`} /> Transcript</span>
-              <span className="chip"><i className={`dot ${status.anthropic ? 'on' : ''}`} /> Questions and evaluation</span>
-              <span className="chip"><i className={`dot ${status.anam ? 'on' : status.elevenlabsAgent ? 'on' : ''}`} /> {status.anam ? 'Live avatar' : 'Voice panel'}</span>
-              <span className="chip"><i className={`dot ${status.fal ? 'on' : ''}`} /> Generated media</span>
-              <span className="chip"><i className={`dot ${status.synthesia ? 'on' : ''}`} /> Synthesia faces</span>
-            </div>
-            {!status.elevenlabs && <p className="faint">Without a transcript, pace and fillers cannot be measured. Add an ElevenLabs key to the .env file.</p>}
-          </section>
+              <span className="eyebrow purple">AI-simulated experts</span>
+              <p className="hint">Questions adapt to your pitch and your answers.</p>
 
-          {history.length > 0 && (
-            <section className="card stack">
-              <h3>Past sessions</h3>
-              <div className="history">
-                {history.slice(0, 6).map((h) => (
-                  <button key={h.id} onClick={() => onOpenSession(h.id)}>
-                    <span>{h.title}</span>
-                    <span className="faint num">
-                      {typeof h.overall === 'number' ? `${h.overall.toFixed(1)} · ` : ''}
-                      {new Date(h.startedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                    </span>
-                  </button>
-                ))}
-              </div>
+              <button
+                className="btn primary large start"
+                disabled={!canStart}
+                // The session uses exactly the Anam avatars shown here.
+                onClick={() => onStart({ panel: { ...panel, personas: withAnamIds(panel.personas, anamMatches) }, slides, deckName, pitchSeconds, questionCount, context: context.trim() })}
+              >
+                Start practice session
+              </button>
+              <p className="hint center">{stream ? 'Your camera and microphone are ready' : 'Allow camera and microphone to start'}</p>
             </section>
-          )}
-        </div>
-      </div>
 
-      <div className="start-bar">
-        <button
-          className="btn primary large"
-          disabled={!canStart}
-          // The session uses exactly the Anam avatars shown here.
-          onClick={() => onStart({ panel: { ...panel, personas: withAnamIds(panel.personas, anamMatches) }, slides, deckName, pitchSeconds, questionCount, context: context.trim() })}
-        >
-          Start pitch
-        </button>
-        {!stream && <span className="faint">Allow camera and microphone to start</span>}
+            <section className="card stack">
+              <h3>Services</h3>
+              <div className="row small" style={{ flexWrap: 'wrap', gap: 8 }}>
+                <span className="chip"><i className={`dot ${status.elevenlabs ? 'on' : ''}`} /> Transcript</span>
+                <span className="chip"><i className={`dot ${status.anthropic ? 'on' : ''}`} /> Questions and evaluation</span>
+                <span className="chip"><i className={`dot ${status.anam ? 'on' : status.elevenlabsAgent ? 'on' : ''}`} /> {status.anam ? 'Live avatar' : 'Voice panel'}</span>
+                <span className="chip"><i className={`dot ${status.fal ? 'on' : ''}`} /> Generated media</span>
+                <span className="chip"><i className={`dot ${status.synthesia ? 'on' : ''}`} /> Synthesia faces</span>
+              </div>
+              {!status.elevenlabs && <p className="faint">Without a transcript, pace and fillers cannot be measured. Add an ElevenLabs key to the .env file.</p>}
+            </section>
+
+            {history.length > 0 && (
+              <section className="card stack" id="past-sessions">
+                <h3>Past sessions</h3>
+                <div className="history">
+                  {history.slice(0, 6).map((h) => (
+                    <button key={h.id} onClick={() => onOpenSession(h.id)}>
+                      <span>{h.title}</span>
+                      <span className="faint num">
+                        {typeof h.overall === 'number' ? `${h.overall.toFixed(1)} · ` : ''}
+                        {new Date(h.startedAt).toLocaleDateString(undefined, { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )

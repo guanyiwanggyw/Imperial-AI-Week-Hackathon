@@ -10,7 +10,9 @@ import { planQuestions, runTurn, type QnaMode } from '../lib/qna'
 import { chooseReaction } from '../lib/reactions'
 import { SessionRecorder } from '../lib/recorder'
 import type { QnaTurn, SessionConfig, SessionData, SessionEvent, Word } from '../types'
+import recordingDot from '../assets/recording-dot.svg'
 import { Audience, type ActiveReaction } from './Audience'
+import { Steps, TopNav } from './Chrome'
 import { LiveCaptions } from './LiveCaptions'
 
 interface Props {
@@ -422,37 +424,57 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const over = phase === 'pitch' && now > config.pitchSeconds
   const backdrop = assets[backdropKey(panel)] ?? null
 
+  const phaseLabel = { countdown: 'Get ready', pitch: paused ? 'Paused' : 'Pitch in progress', conferring: 'Panel conferring', qna: 'Questions', finishing: 'Finishing' }[phase] ?? ''
+  const shownTime = phase === 'pitch' ? now : pitchEnd.current || now
+
   return (
     <div className="session">
+      <TopNav active="practice" wide />
+      <div className="session-steps">
+        <div className="rp-wrap">
+          <Steps current={1} />
+        </div>
+      </div>
+
       <div className="session-main">
         <div className="stage">
-          <div className="slide-frame">
-            {slides.length ? (
-              <img src={slides[slide].image} alt={`Slide ${slide + 1}`} />
-            ) : (
-              <div className="no-slides">
-                <h2>No slides</h2>
-                <p className="muted">Speak to the panel directly.</p>
+          <section className="stage-card">
+            <div className="stage-head">
+              <h2>Your pitch</h2>
+              <span className={`phase-pill ${phase === 'pitch' && !paused ? 'live' : ''}`}>{phaseLabel}</span>
+            </div>
+            <div className="slide-frame">
+              {slides.length ? (
+                <img src={slides[slide].image} alt={`Slide ${slide + 1}`} />
+              ) : (
+                <div className="no-slides">
+                  <strong>No slides shared</strong>
+                  <p>Speak to the panel directly.</p>
+                </div>
+              )}
+            </div>
+            {slides.length > 0 && (
+              <div className="slide-progress" aria-label="Time per slide">
+                {slides.map((s, i) => (
+                  <div key={s.index} className={i === slide ? 'current' : ''} onClick={() => goTo(i)} title={`Slide ${i + 1}: ${formatTime(slideSeconds[i])}`}>
+                    <span style={{ width: `${Math.min(100, (slideSeconds[i] / Math.max(config.pitchSeconds / slides.length, 1)) * 100)}%` }} />
+                  </div>
+                ))}
               </div>
             )}
-          </div>
-          {slides.length > 0 && (
-            <div className="slide-progress" aria-label="Time per slide">
-              {slides.map((s, i) => (
-                <div key={s.index} className={i === slide ? 'current' : ''} onClick={() => goTo(i)} title={`Slide ${i + 1}: ${formatTime(slideSeconds[i])}`}>
-                  <span style={{ width: `${Math.min(100, (slideSeconds[i] / Math.max(config.pitchSeconds / slides.length, 1)) * 100)}%` }} />
-                </div>
-              ))}
-            </div>
-          )}
-          <LiveCaptions
-            personas={panel.personas}
-            phrases={transcript.phrases}
-            partial={transcript.partial}
-            lines={[...avatarState.lines, ...voiceLines]}
-            error={transcript.error}
-            placeholder={phase === 'pitch' ? 'Your words will appear here.' : ''}
-          />
+            {slides.length === 0 && config.questionCount > 0 && phase === 'pitch' && <div className="stage-note">Your panel will ask follow-up questions after your pitch.</div>}
+          </section>
+          <section className="transcript-card">
+            <span className="eyebrow blue">Live transcript</span>
+            <LiveCaptions
+              personas={panel.personas}
+              phrases={transcript.phrases}
+              partial={transcript.partial}
+              lines={[...avatarState.lines, ...voiceLines]}
+              error={transcript.error}
+              placeholder={phase === 'pitch' ? 'Your words will appear here.' : ''}
+            />
+          </section>
         </div>
 
         <div className="side">
@@ -460,56 +482,66 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
             <video ref={selfView} autoPlay muted playsInline />
             {phase !== 'countdown' && phase !== 'finishing' && (
               <div className="rec">
-                <i /> {paused ? 'Paused' : 'Recording'}
+                <img src={recordingDot} alt="" width={8} height={8} /> {paused ? 'Paused' : 'Recording'}
               </div>
             )}
+            <div className="you">You</div>
           </div>
 
-          <Audience
-            personas={panel.personas}
-            assets={assets}
-            backdrop={backdrop}
-            reactions={reactions}
-            onReactionEnd={(id) => setReactions((r) => ({ ...r, [id]: undefined }))}
-            activeId={phase === 'qna' ? activeId : null}
-            avatars={avatars}
-            speakingId={mode === 'voice' && speaking ? activeId : null}
-          />
+          <section className="panel-card">
+            <div className="panel-head">
+              <h2>Expert panel</h2>
+              <span>{status.anam ? 'AI · Live avatars' : 'AI · Voice only'}</span>
+            </div>
+            <Audience
+              personas={panel.personas}
+              assets={assets}
+              backdrop={backdrop}
+              reactions={reactions}
+              onReactionEnd={(id) => setReactions((r) => ({ ...r, [id]: undefined }))}
+              activeId={phase === 'qna' ? activeId : null}
+              avatars={avatars}
+              speakingId={mode === 'voice' && speaking ? activeId : null}
+            />
 
-          {(phase === 'qna' || phase === 'conferring') && (
-            <div className="question-card">
-              <div className="who">
-                {phase === 'conferring' ? 'The panel is preparing questions' : questionInfo && `Question ${questionInfo.n} of ${questionInfo.total} · ${questionInfo.who}`}
-              </div>
-              <div>
-                {phase === 'conferring' ? (
-                  <span className="spinner" style={{ display: 'inline-block' }} />
-                ) : mode === 'spoken' && askingLine ? (
-                  <>
-                    {askingLine.done ? askingLine.text : askingLine.spoken}
-                    {!askingLine.done && <span className="faint"> {askingLine.text.slice(askingLine.spoken.length)}</span>}
-                  </>
-                ) : (
-                  caption || <span className="faint">Listening</span>
+            {(phase === 'qna' || phase === 'conferring') && (
+              <div className="question-card">
+                <div className="who">
+                  {phase === 'conferring' ? 'The panel is preparing questions' : questionInfo && `Question ${questionInfo.n} of ${questionInfo.total} · ${questionInfo.who}`}
+                </div>
+                <div>
+                  {phase === 'conferring' ? (
+                    <span className="spinner" style={{ display: 'inline-block' }} />
+                  ) : mode === 'spoken' && askingLine ? (
+                    <>
+                      {askingLine.done ? askingLine.text : askingLine.spoken}
+                      {!askingLine.done && <span className="faint"> {askingLine.text.slice(askingLine.spoken.length)}</span>}
+                    </>
+                  ) : (
+                    caption || <span className="faint">Listening</span>
+                  )}
+                </div>
+                {toolNotes.length > 0 && (
+                  <div className="tools">
+                    {toolNotes.map((n, i) => (
+                      <span key={i} className="chip">
+                        {n}
+                      </span>
+                    ))}
+                  </div>
                 )}
               </div>
-              {toolNotes.length > 0 && (
-                <div className="tools">
-                  {toolNotes.map((n, i) => (
-                    <span key={i} className="chip">
-                      {n}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+            )}
+
+            {phase === 'pitch' && <div className="panel-status">{over ? 'Time is up. Wrap up when ready.' : 'The panel is listening'}</div>}
+          </section>
 
           {phase === 'pitch' && (
-            <div className="metrics">
+            <section className="metrics">
+              <span className="eyebrow">Live delivery</span>
               <div className="metric">
                 <div className="label">Pace</div>
-                <div className="value">{live.wpm ? `${Math.round(live.wpm)} wpm` : '–'}</div>
+                <div className="value">{live.wpm ? `${Math.round(live.wpm)} wpm` : '—'}</div>
               </div>
               <div className="metric">
                 <div className="label">Fillers</div>
@@ -517,17 +549,28 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
               </div>
               <div className="metric" title={live.eye === null ? 'Not measured: the camera needs to see your face' : undefined}>
                 <div className="label">Eye contact</div>
-                <div className="value">{live.eye === null ? '–' : `${Math.round(live.eye * 100)}%`}</div>
+                <div className="value">{live.eye === null ? '—' : `${Math.round(live.eye * 100)}%`}</div>
               </div>
-            </div>
+            </section>
           )}
         </div>
       </div>
 
       <div className="controls">
-        <span className={`timer ${over ? 'over' : ''}`}>
-          {formatTime(phase === 'pitch' ? now : pitchEnd.current || now)} <span className="faint">/ {formatTime(config.pitchSeconds)}</span>
-        </span>
+        <div className="clock">
+          <div>
+            <span className={`timer ${over ? 'over' : ''}`}>{formatTime(shownTime)}</span>
+            <span className="of">/ {formatTime(config.pitchSeconds)}</span>
+            <span className="phase">
+              {phase === 'pitch' && (over ? 'Time is up. Wrap up when ready.' : 'The panel is listening')}
+              {phase === 'qna' && (mode === 'spoken' ? 'Answer aloud. The next question comes when you finish.' : 'Answer aloud. The panelist will follow up if needed.')}
+              {notice && <span className="faint"> · {notice}</span>}
+            </span>
+          </div>
+          <div className="timer-track" aria-hidden>
+            <div className={over ? 'over' : ''} style={{ width: `${Math.min(100, (shownTime / Math.max(config.pitchSeconds, 1)) * 100)}%` }} />
+          </div>
+        </div>
         {slides.length > 0 && (
           <div className="row" style={{ gap: 4 }}>
             <button className="btn quiet" onClick={() => goTo(slide - 1)} disabled={slide === 0} aria-label="Previous slide">
@@ -541,19 +584,14 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
             </button>
           </div>
         )}
-        <span className="phase">
-          {phase === 'pitch' && (over ? 'Time is up. Wrap up when ready.' : 'The panel is listening')}
-          {phase === 'qna' && (mode === 'spoken' ? 'Answer aloud. The next question comes when you finish.' : 'Answer aloud. The panelist will follow up if needed.')}
-          {notice && <span className="faint"> · {notice}</span>}
-        </span>
         <span className="spacer" />
         {phase === 'pitch' && (
           <>
-            <button className="btn quiet" onClick={togglePause}>
+            <button className="btn plain" onClick={togglePause}>
               {paused ? 'Resume' : 'Pause'}
             </button>
             <button className="btn primary" onClick={() => void endPitch()}>
-              {config.questionCount ? 'End pitch and take questions' : 'End pitch'}
+              {config.questionCount ? 'End pitch & take questions' : 'End pitch'}
             </button>
           </>
         )}
