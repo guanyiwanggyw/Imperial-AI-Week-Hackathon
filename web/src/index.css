@@ -146,8 +146,6 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .slide-progress > div { flex: 1; background: var(--surface-2); border-radius: 2px; position: relative; overflow: hidden; cursor: pointer; }
 .slide-progress > div.current { background: var(--accent-soft); }
 .slide-progress > div > span { position: absolute; inset: 0 auto 0 0; background: var(--accent); opacity: 0.5; }
-.transcript { height: 64px; overflow: hidden; color: var(--text-2); font-size: 14px; display: flex; flex-direction: column; justify-content: flex-end; padding: 0 4px; }
-.transcript .partial { color: var(--text-3); }
 .side { display: flex; flex-direction: column; gap: 12px; min-height: 0; }
 .self-view { position: relative; aspect-ratio: 16 / 9; max-height: 28vh; border-radius: var(--radius); overflow: hidden; background: #000; flex: none; }
 .self-view video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
@@ -276,3 +274,21 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .avatar-badge.live::before { background: #3ecf6e; }
 .avatar-badge.connecting::before { background: #e8b339; }
 @media (prefers-reduced-motion: reduce) { .main-avatar.speaking .still { animation: none; } }
+
+/* Live captions (components/LiveCaptions.tsx) */
+.captions {
+  height: 92px; overflow-y: auto; scrollbar-width: none; padding: 2px 4px; font-size: 14px; line-height: 1.45;
+  display: flex; flex-direction: column; gap: 4px; color: var(--text-2);
+}
+.captions::-webkit-scrollbar { display: none; }
+.captions-empty { color: var(--text-3); margin-top: auto; }
+.caption { display: flex; gap: 8px; align-items: baseline; }
+.caption:first-child { margin-top: auto; }
+.caption .who { flex: none; font-size: 11px; font-weight: 600; color: var(--text-3); min-width: 34px; }
+.caption.panel .who { color: var(--accent); }
+.caption.panel { color: var(--text); }
+.caption .partial { color: var(--text-3); }
+.caption .unspoken { visibility: hidden; }
+.caption .caret { display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -2px; background: var(--accent); animation: caption-caret 1s steps(1) infinite; }
+@keyframes caption-caret { 50% { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .caption .caret { animation: none; } }

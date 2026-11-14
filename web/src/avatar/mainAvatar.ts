@@ -7,7 +7,8 @@
 //   <Avatar avatar={avatar} ... />     // renders the live video, or the portrait while speaking
 //   await speakAs(avatar, persona, text, signal)
 //
-// Every line logs floorOpen → first audio (brief: target under 1 s).
+// Every line logs floorOpen → first audio (brief: target under 1 s), and becomes a live caption
+// (state.lines) that reveals the words as they are spoken.
 import { useSyncExternalStore } from 'react'
 import type { Persona } from '../types'
 import { AnamDriver, BrowserSpeechDriver, type AvatarDriver, type AvatarProvider } from './drivers'
@@ -21,7 +22,26 @@ export interface AvatarState {
   /** Which persona's voice is currently audible (main avatar or a fallback voice). */
   speakingId: string | null
   error: string | null
+  /** Panel lines for live captions, oldest first (last 30). */
+  lines: CaptionLine[]
 }
+
+export interface CaptionLine {
+  id: number
+  personaId: string
+  /** Full line */
+  text: string
+  /** The part already spoken; equals text once finished (unless interrupted) */
+  spoken: string
+  /** Session clock (see setClock) when the line was requested, and when it ended */
+  t: number
+  end: number | null
+  done: boolean
+  interrupted: boolean
+}
+
+/** Reading pace used to reveal captions when the voice does not report its progress. */
+const CAPTION_WORDS_PER_SEC = 2.6
 
 export interface SpeechLog {
   /** performance.now() when the floor opened (say was called) */
@@ -37,7 +57,9 @@ export interface SpeechLog {
 export const avatarSlotId = 'main-avatar-slot'
 
 export class MainAvatar {
-  private state: AvatarState = { status: 'idle', provider: null, personaId: null, speakingId: null, error: null }
+  private state: AvatarState = { status: 'idle', provider: null, personaId: null, speakingId: null, error: null, lines: [] }
+  private now: () => number = () => performance.now() / 1000
+  private lineId = 0
   private listeners = new Set<() => void>()
   private driver: AvatarDriver | null = null
   private warming: Promise<void> | null = null
@@ -51,6 +73,11 @@ export class MainAvatar {
     return () => void this.listeners.delete(fn)
   }
   getState = () => this.state
+
+  /** Use the session clock for caption times, so they line up with the transcript. */
+  setClock(now: () => number) {
+    this.now = now
+  }
 
   private set(patch: Partial<AvatarState>) {
     this.state = { ...this.state, ...patch }
@@ -114,11 +141,31 @@ export class MainAvatar {
     return this.record(persona.id, voice, text, signal)
   }
 
+  private updateLine(id: number, patch: Partial<CaptionLine>) {
+    this.set({ lines: this.state.lines.map((l) => (l.id === id ? { ...l, ...patch } : l)) })
+  }
+
   private async record(personaId: string, driver: AvatarDriver, text: string, signal?: AbortSignal) {
     const at = performance.now()
+    const id = ++this.lineId
+    this.set({ lines: [...this.state.lines.slice(-29), { id, personaId, text, spoken: '', t: this.now(), end: null, done: false, interrupted: false }] })
+    // Reveal the caption with the audio: the provider's own progress where it reports it,
+    // otherwise an estimate at speaking pace from the first audio. Never ahead of the full line.
+    const words = text.split(/\s+/).filter(Boolean)
+    let reported = ''
+    let audioAt: number | null = null
+    const reveal = window.setInterval(() => {
+      if (audioAt === null && this.state.speakingId === personaId) audioAt = performance.now()
+      if (audioAt === null) return
+      const estimated = Math.floor(((performance.now() - audioAt) / 1000) * CAPTION_WORDS_PER_SEC)
+      const shown = Math.min(words.length - 1, Math.max(estimated, reported.split(/\s+/).filter(Boolean).length))
+      const spoken = words.slice(0, shown).join(' ')
+      if (spoken !== this.state.lines.find((l) => l.id === id)?.spoken) this.updateLine(id, { spoken })
+    }, 120)
+    const onProgress = (s: string) => (reported = s)
     let result
     try {
-      result = await driver.say(text, signal)
+      result = await driver.say(text, signal, onProgress)
     } catch (err) {
       // A dropped live session should not end the turn: say it with the browser voice instead.
       console.warn('[avatar] speech failed, retrying with the browser voice:', err)
@@ -128,8 +175,17 @@ export class MainAvatar {
         this.set({ status: 'fallback', provider: 'browser', error: err instanceof Error ? err.message : String(err) })
       }
       driver = fallback
-      result = await fallback.say(text, signal)
+      result = await fallback.say(text, signal, onProgress)
+    } finally {
+      window.clearInterval(reveal)
     }
+    const line = this.state.lines.find((l) => l.id === id)
+    this.updateLine(id, {
+      done: true,
+      end: this.now(),
+      interrupted: result.interrupted,
+      spoken: result.interrupted ? (line?.spoken ?? '') : text,
+    })
     const entry: SpeechLog = { at, personaId, provider: driver.provider, text, ...result }
     this.log.push(entry)
     console.info(`[avatar] ${personaId} via ${entry.provider}: floorOpen→firstAudio ${entry.latencyMs ?? '–'} ms${entry.interrupted ? ' (interrupted)' : ''}`)

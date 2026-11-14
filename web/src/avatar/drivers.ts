@@ -18,8 +18,11 @@ export interface SayResult {
 
 export interface AvatarDriver {
   readonly provider: AvatarProvider
-  /** Resolves when speech has finished, was interrupted, or was aborted through the signal. */
-  say(text: string, signal?: AbortSignal): Promise<SayResult>
+  /**
+   * Resolves when speech has finished, was interrupted, or was aborted through the signal.
+   * onProgress receives the text spoken so far, when the provider reports it (for live captions).
+   */
+  say(text: string, signal?: AbortSignal, onProgress?: (spoken: string) => void): Promise<SayResult>
   interrupt(): void
   stop(): Promise<void>
 }
@@ -33,7 +36,7 @@ export class AnamDriver implements AvatarDriver {
   readonly provider = 'anam'
   private client: AnamClient | null = null
   private video: HTMLVideoElement | null = null
-  private current: { onFirst: () => void; onEnd: (interrupted: boolean) => void } | null = null
+  private current: { onFirst: () => void; onContent: (chunk: string) => void; onEnd: (interrupted: boolean) => void } | null = null
 
   private onSpeaking: (speaking: boolean) => void
   constructor(onSpeaking: (speaking: boolean) => void) {
@@ -64,6 +67,7 @@ export class AnamDriver implements AvatarDriver {
     client.addListener(AnamEvent.MESSAGE_STREAM_EVENT_RECEIVED, (e) => {
       if (e.role !== MessageRole.PERSONA || !this.current) return
       this.current.onFirst()
+      if (e.content) this.current.onContent(e.content)
       if (e.endOfSpeech || e.interrupted) this.current.onEnd(e.interrupted)
     })
     client.addListener(AnamEvent.TALK_STREAM_INTERRUPTED, () => this.current?.onEnd(true))
@@ -96,7 +100,7 @@ export class AnamDriver implements AvatarDriver {
     return Boolean(this.client?.isStreaming())
   }
 
-  say(text: string, signal?: AbortSignal): Promise<SayResult> {
+  say(text: string, signal?: AbortSignal, onProgress?: (spoken: string) => void): Promise<SayResult> {
     const client = this.client
     if (!client) return Promise.reject(new Error('Anam is not connected'))
     this.current?.onEnd(true)
@@ -118,8 +122,14 @@ export class AnamDriver implements AvatarDriver {
           latencyMs = Math.round(performance.now() - startedAt)
           this.onSpeaking(true)
         },
+        // Anam streams the transcript of what the avatar is saying, in step with the audio.
+        onContent: (chunk: string) => {
+          spoken = chunk.startsWith(spoken) ? chunk : spoken + chunk
+          onProgress?.(spoken)
+        },
         onEnd: end,
       }
+      let spoken = ''
       this.current = handlers
       const timer = window.setTimeout(() => end(false), maxSpeechMs(text))
       signal?.addEventListener('abort', () => {
@@ -170,7 +180,7 @@ export class BrowserSpeechDriver implements AvatarDriver {
     this.rate = rate
   }
 
-  say(text: string, signal?: AbortSignal): Promise<SayResult> {
+  say(text: string, signal?: AbortSignal, onProgress?: (spoken: string) => void): Promise<SayResult> {
     return new Promise((resolve) => {
       if (!('speechSynthesis' in window) || signal?.aborted) return resolve({ latencyMs: null, interrupted: Boolean(signal?.aborted) })
       speechSynthesis.cancel()
@@ -191,6 +201,12 @@ export class BrowserSpeechDriver implements AvatarDriver {
       u.onstart = () => {
         latencyMs = Math.round(performance.now() - startedAt)
         this.onSpeaking(true)
+      }
+      // Word boundaries, where the voice reports them (most local voices do).
+      u.onboundary = (e) => {
+        if (e.name !== 'word') return
+        const len = e.charLength || (text.slice(e.charIndex).match(/^\S+/)?.[0].length ?? 0)
+        onProgress?.(text.slice(0, e.charIndex + len))
       }
       u.onend = () => end(false)
       u.onerror = () => end(true)

@@ -1,8 +1,52 @@
 # Guanyi: updates log
 
-Workstream: **main avatar** (brief §4 Integrations: "Anam avatar wired to speak() for the decision-maker persona", plus the `<Avatar>` component and fallback from the team rules).
+Workstreams:
+- **Main avatar** (brief §4 Integrations: "Anam avatar wired to speak() for the decision-maker persona", plus the `<Avatar>` component and fallback from the team rules).
+- **Live captions** (the transcript strip on the live screen, and the brief's "live captions of agent lines").
 
-Read the other `updates/*.md` files before each change. All were empty at the time.
+I read the other `updates/*.md` files before each change.
+
+---
+
+## 2026-11-14: Live captions on the practice screen
+
+I read `updates/Jihu.md` first. **I didn't edit `web/src/eval/**`** (Jihu's). The captions only *read* the transcriber's public fields (`evalRt.transcript.phrases`, `.partial`, `.error`) and import `Phrase` from `web/src/eval`, as Jihu asks.
+
+### What it does
+- **One captions strip under the slides** replaces the old "last 40 words" transcript line. It shows the conversation in time order:
+  - **You:** your committed Scribe phrases, with the words still being recognised shown lighter. Phrases are joined into one row while you keep talking. A pause over 2.5 s, or a panel line, starts a new row.
+  - **Panel lines**, labelled with the persona's name, revealed **word by word as they're spoken**, with a blinking caret while speaking and "…" if interrupted.
+- **Sync with the audio.** Each voice reports how far it has got:
+  - Anam streams the text it is speaking (`MESSAGE_STREAM_EVENT_RECEIVED`).
+  - The browser voice fires word `boundary` events.
+  - Otherwise words appear at 2.6 words/s from the first audio.
+  - Captions never run ahead of the line, and show the full text once it's done.
+- **Question card (Q&A):** in spoken mode it shows the current line as it's spoken, with the rest faint. Voice-agent mode is unchanged (full message).
+- **Ordering:** your rows are placed by when the phrase *ended*, so words you were still saying when a panel line started show after it instead of jumping above it on commit.
+
+### Verified (headless Chrome, real Scribe + real Anam, synthesized test pitch as the fake mic)
+- Your captions stream live and commit with fillers kept ("small clinics, um, cut the time…").
+- Priya's line (live Anam) and Marcus's line (browser voice) reveal in step with the audio. Floor open → first audio was 627–708 ms on Anam and 278–439 ms on the browser voice.
+- No rows jump after the ordering fix.
+
+### API (for UI / Person 3)
+```tsx
+<LiveCaptions personas={...} phrases={evalRt.transcript.phrases} partial={evalRt.transcript.partial}
+  lines={[...useAvatarState(avatar).lines, ...voiceAgentLines]} error={evalRt.transcript.error} rows={4} />
+```
+- `MainAvatar` state now has `lines: CaptionLine[]`, with `{ id, personaId, text, spoken, t, end, done, interrupted }`. Times are on the session clock via `avatar.setClock(clock.now)`.
+- `AvatarDriver.say(text, signal?, onProgress?)`: the new third argument receives the text spoken so far. Person 2: implement it in an ElevenLabs driver and its captions sync too.
+
+### Files
+- **New:** `web/src/components/LiveCaptions.tsx`
+- **Changed:**
+  - `web/src/avatar/drivers.ts`: progress callbacks.
+  - `web/src/avatar/mainAvatar.ts`: caption lines and their reveal.
+  - `web/src/components/Session.tsx`: renders `<LiveCaptions>`. In voice-agent mode, agent lines are collected as caption lines; the question card shows the spoken line. `lastWords` is removed.
+  - `web/src/index.css`: `.captions` styles added; the unused `.transcript` styles removed.
+
+### For Jihu (not changed; your files)
+- The transcriber kept transcribing while the panel spoke. In the test, the looping fake mic produced "You" rows during panel lines. `LiveTranscript.setMuted()` exists but nothing seems to call it during agent speech. With real speakers, echo cancellation should catch the avatar's audio, but it's worth checking whether you want the mic muted, or kept on so you can measure talk-over.
 
 ---
 

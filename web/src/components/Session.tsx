@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { postForm, type Status } from '../api'
-import { decisionMaker, MainAvatar, speakAs } from '../avatar/mainAvatar'
+import { decisionMaker, MainAvatar, speakAs, useAvatarState, type CaptionLine } from '../avatar/mainAvatar'
 import { buildReport } from '../eval/evaluate'
 import { LiveEventEngine } from '../eval/liveEvents'
 import { deliveryStats, eyeContactShare, fillerIndices, formatTime, timestampedTranscript, wpmBetween } from '../eval/metrics'
@@ -11,6 +11,7 @@ import { chooseReaction } from '../lib/reactions'
 import { SessionRecorder } from '../lib/recorder'
 import type { QnaTurn, SessionConfig, SessionData, SessionEvent, Word } from '../types'
 import { Audience, type ActiveReaction } from './Audience'
+import { LiveCaptions } from './LiveCaptions'
 
 interface Props {
   config: SessionConfig
@@ -66,6 +67,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const selfView = useRef<HTMLVideoElement>(null)
   // One live main avatar for the whole session, voiced by the decision-maker.
   const avatar = useRef(new MainAvatar()).current
+  avatar.setClock(clock.now) // caption times on the session clock, like the transcript
+  const avatarState = useAvatarState(avatar)
   const mainPersona = decisionMaker(panel.personas)
 
   const [phase, setPhase] = useState<Phase>('countdown')
@@ -87,6 +90,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [speaking, setSpeaking] = useState(false)
   const [caption, setCaption] = useState('')
+  // Voice-agent mode (ElevenLabs) lines for the live captions; spoken-mode lines come from the avatar.
+  const [voiceLines, setVoiceLines] = useState<CaptionLine[]>([])
   const [questionInfo, setQuestionInfo] = useState<{ n: number; total: number; who: string } | null>(null)
   const [toolNotes, setToolNotes] = useState<string[]>([])
   const skipRef = useRef<AbortController | null>(null)
@@ -311,6 +316,10 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
         onCaption: (text: string) => {
           setCaption(text)
           evalRt.agentCaption(text)
+          if (modeRef.current === 'voice') {
+            const t = clock.now()
+            setVoiceLines((ls) => [...ls.slice(-29), { id: -(ls.length + 1), personaId: persona.id, text, spoken: text, t, end: t, done: true, interrupted: false }])
+          }
         },
       }
       let turn: QnaTurn | null = null
@@ -409,7 +418,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
 
   // ---------- render ----------
 
-  const lastWords = transcript.words.slice(-40).map((w) => w.text).join(' ')
+  // The asking panelist's line as it is being spoken (spoken mode), for the question card.
+  const askingLine = [...avatarState.lines].reverse().find((l) => l.personaId === activeId)
   const over = phase === 'pitch' && now > config.pitchSeconds
   const backdrop = assets[backdropKey(panel)] ?? null
 
@@ -436,17 +446,14 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
               ))}
             </div>
           )}
-          <div className="transcript" aria-live="polite">
-            <div>
-              {lastWords}
-              {transcript.partial && <span className="partial"> {transcript.partial}</span>}
-              {!lastWords && !transcript.partial && (
-                <span className="faint">
-                  {transcript.error ? `Live transcript unavailable: ${transcript.error}` : phase === 'pitch' ? 'Your words will appear here.' : ''}
-                </span>
-              )}
-            </div>
-          </div>
+          <LiveCaptions
+            personas={panel.personas}
+            phrases={transcript.phrases}
+            partial={transcript.partial}
+            lines={[...avatarState.lines, ...voiceLines]}
+            error={transcript.error}
+            placeholder={phase === 'pitch' ? 'Your words will appear here.' : ''}
+          />
         </div>
 
         <div className="side">
@@ -476,7 +483,18 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
               <div className="who">
                 {phase === 'conferring' ? 'The panel is preparing questions' : questionInfo && `Question ${questionInfo.n} of ${questionInfo.total} · ${questionInfo.who}`}
               </div>
-              <div>{phase === 'conferring' ? <span className="spinner" style={{ display: 'inline-block' }} /> : caption || <span className="faint">Listening</span>}</div>
+              <div>
+                {phase === 'conferring' ? (
+                  <span className="spinner" style={{ display: 'inline-block' }} />
+                ) : mode === 'spoken' && askingLine ? (
+                  <>
+                    {askingLine.done ? askingLine.text : askingLine.spoken}
+                    {!askingLine.done && <span className="faint"> {askingLine.text.slice(askingLine.spoken.length)}</span>}
+                  </>
+                ) : (
+                  caption || <span className="faint">Listening</span>
+                )}
+              </div>
               {toolNotes.length > 0 && (
                 <div className="tools">
                   {toolNotes.map((n, i) => (
