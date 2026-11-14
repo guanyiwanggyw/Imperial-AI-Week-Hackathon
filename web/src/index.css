@@ -292,3 +292,14 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .caption .caret { display: inline-block; width: 2px; height: 1em; margin-left: 2px; vertical-align: -2px; background: var(--accent); animation: caption-caret 1s steps(1) infinite; }
 @keyframes caption-caret { 50% { opacity: 0; } }
 @media (prefers-reduced-motion: reduce) { .caption .caret { animation: none; } }
+
+/* Anam avatar per agent (avatar/AnamTag.tsx) */
+.anam-tag {
+  display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 2px 8px 2px 2px; max-width: 100%;
+  font: inherit; font-size: 12px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
+}
+span.anam-tag { padding: 2px 8px; cursor: default; }
+.anam-tag img { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex: none; }
+.anam-tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.anam-tag code { font-size: 11px; color: var(--text-3); }
+.anam-tag:hover { border-color: var(--accent); }

@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { errorText, getJson, type Status } from '../api'
+import { AnamTag } from '../avatar/AnamTag'
+import { matchAnamAvatars, withAnamIds, type AnamMatch } from '../avatar/anamMatch'
 import { loadSlides } from '../lib/pdf'
 import {
   backdropKey,
@@ -74,6 +76,28 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
   const [level, setLevel] = useState(0)
 
   const panel = panelId === 'custom' ? custom : PANELS.find((p) => p.id === panelId)!
+
+  // The Anam avatar for every agent on the panel: their own id, or a match (gender, then look).
+  const matchKey = JSON.stringify(panel.personas.map((p) => [p.name, p.look, p.voiceId, p.anamAvatarId, p.anamVoiceId]))
+  const [anam, setAnam] = useState<{ key: string; matches: AnamMatch[] } | null>(null)
+  const anamMatches = anam?.key === matchKey ? anam.matches : null
+  useEffect(() => {
+    if (!status.anam) return
+    let cancelled = false
+    // Debounced, so typing in the custom panel does not fire a request per key.
+    const timer = window.setTimeout(() => {
+      matchAnamAvatars(panel.personas).then(
+        (matches) => !cancelled && setAnam({ key: matchKey, matches }),
+        (err) => console.warn('Anam avatar match failed:', err),
+      )
+    }, 400)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+    // panel.personas is captured through matchKey
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [matchKey, status.anam])
 
   useEffect(() => {
     void loadAssets()
@@ -260,6 +284,19 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
                         </label>
                       </div>
                       <input type="text" value={p.look} onChange={(e) => updatePersona(i, { look: e.target.value })} aria-label="Appearance for the portrait" placeholder="Appearance, used to generate the portrait" />
+                      {status.anam && (
+                        <div className="row small" style={{ flexWrap: 'wrap' }}>
+                          <input
+                            type="text"
+                            value={p.anamAvatarId ?? ''}
+                            onChange={(e) => updatePersona(i, { anamAvatarId: e.target.value.trim() || undefined })}
+                            aria-label="Anam avatar id"
+                            placeholder="Anam avatar id (optional, otherwise matched)"
+                            style={{ flex: '1 1 220px' }}
+                          />
+                          <AnamTag match={anamMatches?.[i]} />
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -278,7 +315,7 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
               </div>
             ) : (
               <div className="stack" style={{ gap: 8 }}>
-                {panel.personas.map((p) => (
+                {panel.personas.map((p, i) => (
                   <div key={p.id} className="row">
                     <span className="avatar" style={{ width: 36, height: 36 }}>
                       {assets[portraitKey(p)] ? <img src={assets[portraitKey(p)]} alt="" /> : initials(p.name)}
@@ -288,6 +325,7 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
                         {p.name} <span className="faint">· {p.role}</span>
                       </div>
                       <div className="faint">{p.personality}</div>
+                      {status.anam && <AnamTag match={anamMatches?.[i]} />}
                     </div>
                     {assets[introKey(p)] && (
                       <button className="btn quiet small" onClick={() => setPlayingIntro(p)} aria-label={`Play ${p.name}'s intro`}>
@@ -468,7 +506,8 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
         <button
           className="btn primary large"
           disabled={!canStart}
-          onClick={() => onStart({ panel, slides, deckName, pitchSeconds, questionCount, context: context.trim() })}
+          // The session uses exactly the Anam avatars shown here.
+          onClick={() => onStart({ panel: { ...panel, personas: withAnamIds(panel.personas, anamMatches) }, slides, deckName, pitchSeconds, questionCount, context: context.trim() })}
         >
           Start pitch
         </button>

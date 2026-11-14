@@ -1,5 +1,5 @@
 import { Avatar } from '../avatar/Avatar'
-import { useAvatarState, type MainAvatar } from '../avatar/mainAvatar'
+import { useAvatarState, type PanelAvatars } from '../avatar/panelAvatars'
 import { REACTION_LABEL } from '../lib/reactions'
 import { initials, portraitKey, reactionKey, type Assets } from '../lib/media'
 import type { Persona, Reaction } from '../types'
@@ -17,22 +17,20 @@ interface Props {
   onReactionEnd: (personaId: string) => void
   /** Q&A: the persona currently asking, shown large */
   activeId: string | null
-  /** The live main avatar, rendered in the seat of mainId (the decision-maker). */
-  avatar: MainAvatar
-  mainId: string | undefined
+  /** Every agent's live avatar; each seat renders its own <Avatar>. */
+  avatars: PanelAvatars
   /** Extra speaking highlight for voices outside the avatar (the ElevenLabs agent mode). */
   speakingId?: string | null
 }
 
 /**
- * The panel. The decision-maker's seat is the main avatar: a live Anam video that idles while
- * listening, or the portrait in the voice fallback. Other seats show a portrait that reacts with
- * a generated clip (or a subtle CSS motion if no clip exists). During Q&A the asking panelist is
- * shown large, and the seat whose voice is audible is highlighted.
+ * The panel. Every seat is a live Anam avatar that idles while listening. A seat whose avatar is not
+ * live (connecting, or the voice fallback) shows the agent's portrait, which reacts with a generated
+ * clip (or a subtle CSS motion if no clip exists). During Q&A the asking agent is shown large, and
+ * the seat whose voice is audible is highlighted.
  */
-export function Audience({ personas, assets, backdrop, reactions, onReactionEnd, activeId, avatar, mainId, speakingId }: Props) {
-  const state = useAvatarState(avatar)
-  const avatarLive = state.status === 'live'
+export function Audience({ personas, assets, backdrop, reactions, onReactionEnd, activeId, avatars, speakingId }: Props) {
+  const state = useAvatarState(avatars)
   const focus = activeId !== null
   return (
     <div
@@ -44,9 +42,8 @@ export function Audience({ personas, assets, backdrop, reactions, onReactionEnd,
         const r = reactions[p.id]
         const clip = r ? assets[reactionKey(p, r.reaction)] : undefined
         const portrait = assets[portraitKey(p)]
-        const isMain = p.id === mainId
-        // The live avatar has its own idle motion; reaction clips would cover it.
-        const showReaction = r && !(isMain && avatarLive)
+        // A live avatar has its own idle motion; reaction clips would cover it.
+        const showReaction = r && state.seats[p.id]?.status !== 'live'
         const face = (
           <>
             <div className={`face ${showReaction && !clip ? r.reaction : ''}`} key={showReaction && !clip ? r.id : 'still'} onAnimationEnd={() => onReactionEnd(p.id)}>
@@ -58,13 +55,9 @@ export function Audience({ personas, assets, backdrop, reactions, onReactionEnd,
         return (
           <div key={p.id} className={`seat ${p.id === activeId ? 'active' : ''} ${state.speakingId === p.id || speakingId === p.id ? 'speaking' : ''}`}>
             <div className="tile">
-              {isMain ? (
-                <Avatar avatar={avatar} persona={p} portrait={portrait}>
-                  {face}
-                </Avatar>
-              ) : (
-                face
-              )}
+              <Avatar avatars={avatars} persona={p} portrait={portrait}>
+                {face}
+              </Avatar>
             </div>
             <div className="name">
               {p.name} <span style={{ opacity: 0.75 }}>· {p.role}</span>

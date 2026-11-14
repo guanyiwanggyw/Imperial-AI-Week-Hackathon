@@ -5,8 +5,8 @@
 import { AnamEvent, createClient, MessageRole, type AnamClient } from '@anam-ai/js-sdk'
 import { postJson } from '../api'
 import { personaGender } from '../lib/media'
-import { PORTRAIT_STYLE } from '../personas'
 import type { Persona } from '../types'
+import { appearance } from './anamMatch'
 
 export type AvatarProvider = 'anam' | 'browser'
 
@@ -53,9 +53,11 @@ export class AnamDriver implements AvatarDriver {
       '/api/avatar/anam-token',
       {
         name: persona.name,
+        // The agent's own Anam ids win; otherwise the server matches by gender and appearance.
+        avatarId: persona.anamAvatarId,
+        voiceId: persona.anamVoiceId,
         gender: personaGender(persona),
-        // Only the appearance; the shared fal portrait style would skew the avatar match.
-        look: persona.look.replace(PORTRAIT_STYLE, '').trim(),
+        look: appearance(persona),
         idleStyle: persona.idleStyle,
         expressivity: 0.3 + persona.expression.smile * 0.4,
       },

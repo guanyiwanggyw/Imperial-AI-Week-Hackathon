@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { postForm, type Status } from '../api'
-import { decisionMaker, MainAvatar, speakAs, useAvatarState, type CaptionLine } from '../avatar/mainAvatar'
+import { PanelAvatars, speakAs, useAvatarState, type CaptionLine } from '../avatar/panelAvatars'
 import { buildReport } from '../eval/evaluate'
 import { LiveEventEngine } from '../eval/liveEvents'
 import { deliveryStats, eyeContactShare, fillerIndices, formatTime, timestampedTranscript, wpmBetween } from '../eval/metrics'
@@ -65,11 +65,10 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const evalRt = evalRef.current
   const transcript = evalRt.transcript
   const selfView = useRef<HTMLVideoElement>(null)
-  // One live main avatar for the whole session, voiced by the decision-maker.
-  const avatar = useRef(new MainAvatar()).current
-  avatar.setClock(clock.now) // caption times on the session clock, like the transcript
-  const avatarState = useAvatarState(avatar)
-  const mainPersona = decisionMaker(panel.personas)
+  // A live avatar for every agent, for the whole session.
+  const avatars = useRef(new PanelAvatars()).current
+  avatars.setClock(clock.now) // caption times on the session clock, like the transcript
+  const avatarState = useAvatarState(avatars)
 
   const [phase, setPhase] = useState<Phase>('countdown')
   const phaseRef = useRef<Phase>('countdown')
@@ -90,7 +89,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null)
   const [speaking, setSpeaking] = useState(false)
   const [caption, setCaption] = useState('')
-  // Voice-agent mode (ElevenLabs) lines for the live captions; spoken-mode lines come from the avatar.
+  // Voice-agent mode (ElevenLabs) lines for the live captions; spoken-mode lines come from the avatars.
   const [voiceLines, setVoiceLines] = useState<CaptionLine[]>([])
   const [questionInfo, setQuestionInfo] = useState<{ n: number; total: number; who: string } | null>(null)
   const [toolNotes, setToolNotes] = useState<string[]>([])
@@ -112,8 +111,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
       if (e.type === 'tool_called' && e.detail) setToolNotes((n) => [...n, e.detail!.split(': ').slice(1).join(': ')])
       if (phaseRef.current !== 'pitch') return
       panel.personas.forEach((p) => {
-        // The live avatar idles on its own; reaction clips are for the still portraits.
-        if (p.id === mainPersona?.id && avatar.getState().status === 'live') return
+        // Live avatars idle on their own; reaction clips are for the still portraits.
+        if (avatars.seat(p.id).status === 'live') return
         const reaction = chooseReaction(p, e)
         if (!reaction) return
         // Stagger so the panel does not react in unison.
@@ -122,7 +121,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
         }, 300 + Math.random() * 1200)
       })
     },
-    [panel.personas, mainPersona, avatar],
+    [panel.personas, avatars],
   )
   const engine = useRef<LiveEventEngine | null>(null)
   engine.current ??= new LiveEventEngine(onEvent)
@@ -131,8 +130,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
 
   useEffect(() => {
     stopQna.current = false
-    // Warm the avatar during the countdown so it is live (and idling) when the pitch starts.
-    if (mainPersona) void avatar.warm(mainPersona, { anam: status.anam })
+    // Warm every agent's avatar during the countdown so they are live (and idling) when the pitch starts.
+    void avatars.warm(panel.personas, { anam: status.anam })
     if (selfView.current) {
       selfView.current.srcObject = stream
       // Calibrate during the countdown: the speaker looks at the panel and stands naturally.
@@ -158,7 +157,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
       evalRt.stop()
       skipRef.current?.abort()
       stopQna.current = true
-      void avatar.stop()
+      void avatars.stop()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -296,7 +295,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
           evalRt.agentSpeaking(true, persona.name)
           evalRt.agentCaption(text)
           try {
-            const log = await speakAs(avatar, persona, seat, text, signal)
+            const log = await speakAs(avatars, persona, seat, text, signal)
             evalRt.agentSpeaking(false, persona.name, { startAt: askedAt + (log.latencyMs ?? 0) / 1000, interrupted: log.interrupted })
             return log
           } catch (err) {
@@ -351,7 +350,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
     if (phaseRef.current === 'finishing') return
     stopQna.current = true
     skipRef.current?.abort()
-    void avatar.stop()
+    void avatars.stop()
     setPhaseBoth('finishing')
     const duration = clock.now()
     if (!pitchEnd.current) pitchEnd.current = duration
@@ -473,8 +472,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
             reactions={reactions}
             onReactionEnd={(id) => setReactions((r) => ({ ...r, [id]: undefined }))}
             activeId={phase === 'qna' ? activeId : null}
-            avatar={avatar}
-            mainId={mainPersona?.id}
+            avatars={avatars}
             speakingId={mode === 'voice' && speaking ? activeId : null}
           />
 

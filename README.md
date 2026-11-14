@@ -37,7 +37,7 @@ ElevenLabs Scribe realtime ── live transcript             /api/llm/questions
           └── report: delivery layer (measured) + content layer (Claude) → overall
 ```
 
-**Main avatar.** The decision-maker (the persona marked `decisionMaker`, else the first panelist) is a live Anam avatar. One session opens during the countdown, idles while it listens to the pitch, and says exactly the text we send (`client.talk`); Anam's own LLM is off (`CUSTOMER_CLIENT_V1`), so the orchestrator owns the brain. Every line goes through `speakAs()` and is logged with its floor-open → first-audio latency. Other panelists speak with a voice and their tile lights up. If Anam is not configured or drops, the same calls fall back to the portrait and browser speech, so the demo never stalls. Code: [web/src/avatar](web/src/avatar), [server/src/avatar.ts](server/src/avatar.ts).
+**Live avatars.** Every agent on the panel is a live Anam avatar with its own face and voice. One session per agent opens in parallel during the countdown; each idles while it listens to the pitch and says exactly the text we send (`client.talk`). Anam's own LLM is off (`CUSTOMER_CLIENT_V1`), so the orchestrator owns the brain. Every line goes through `speakAs()`, is captioned as it is spoken, and is logged with its floor-open → first-audio latency. An agent whose session cannot start or drops falls back on its own to its portrait and browser speech, so the demo never stalls. Each live agent is billed as its own Anam session. Code: [web/src/avatar](web/src/avatar), [server/src/avatar.ts](server/src/avatar.ts).
 
 **Voice agent.** Without Anam, one ElevenLabs Conversational AI agent can play every panelist. Each persona is injected per session through dynamic variables (name, role, personality, focus, strictness and the planned question), and the voice is overridden per persona. The agent's client tools (`get_transcript`, `get_slide`, `get_metrics_summary`, `log_answer_assessment`, `end_qna`) run in the browser.
 
@@ -61,7 +61,7 @@ npm run dev:server            # terminal 1, http://localhost:8787
 npm run dev:web               # terminal 2, open http://localhost:5173
 ```
 
-For the live avatar you only need `ANAM_API_KEY`; the first avatar and English voice on the account are used unless `ANAM_AVATAR_ID` / `ANAM_VOICE_ID` are set (list them at `GET /api/avatar/anam-options`). Before the demo, open the setup screen and click **Synthesia faces** (a few minutes; set `SYNTHESIA_TEST=true` for free watermarked test renders), then **Generate room and portraits**, then **Animate reactions** (this takes a few minutes). Generated media is cached in `server/data/generated` and reused.
+For the live avatar you only need `ANAM_API_KEY`. Every agent has its own Anam avatar and voice: built-in agents set `anamAvatarId` / `anamVoiceId` in [web/src/personas.ts](web/src/personas.ts), and custom agents take a pasted id or are matched by gender and appearance (never repeating a face on a panel). The setup screen shows each agent's avatar and id; `GET /api/avatar/anam-options` lists everything on the account. Before the demo, open the setup screen and click **Synthesia faces** (a few minutes; set `SYNTHESIA_TEST=true` for free watermarked test renders), then **Generate room and portraits**, then **Animate reactions** (this takes a few minutes). Generated media is cached in `server/data/generated` and reused.
 
 What works without which key:
 
@@ -79,7 +79,7 @@ What works without which key:
 ## How it qualifies for each prize
 
 - **Best ElevenLabs project.** A real-time voice agent with agentic depth: per-persona dynamic variables and voices, five client tools it calls mid-conversation to fact-check the speaker against the transcript and slides, follow-up logic, and self-ending turns. ElevenLabs Scribe also powers the live transcript (realtime) and the accurate word-timestamped transcript (batch) that drive the delivery metrics.
-- **Best use of Anam.** The decision-maker is one live Anam session from the countdown to the end: it idles while listening to the pitch (Director Notes give each persona its own idle style and expressivity), then asks questions we supply through `talk`, with latency logged per line.
+- **Best use of Anam.** The whole panel is live Anam avatars from the countdown to the end, one session per agent, each with its own avatar and voice: they idle while listening to the pitch (Director Notes give each persona its own idle style and expressivity), then ask questions we supply through `talk`, with latency logged per line.
 - **Best use of fal.** fal generates the audience environment per panel type, a portrait for every panelist (including custom ones), and image-to-video reaction clips that give silent panelists visible micro-expressions during the pitch.
 - **Best-designed AI product.** One primary action per screen, a small set of neutral colours with one accent, sentence-case copy, glanceable low-key metrics during the pitch, light and dark mode, and helpful empty and error states throughout.
 
