@@ -4,13 +4,18 @@ import { loadSlides } from '../lib/pdf'
 import {
   backdropKey,
   generateImage,
+  hasSynthesiaPortrait,
   initials,
+  introKey,
   loadAssets,
   portraitKey,
   reactionKey,
   reactionStatus,
   REACTIONS,
   startReactionClips,
+  saveSynthesiaPortrait,
+  startSynthesiaFace,
+  synthesiaStatus,
   type Assets,
 } from '../lib/media'
 import { blankPersona, DEFAULT_PITCH_SECONDS, DEFAULT_QUESTION_COUNT, PANELS } from '../personas'
@@ -40,6 +45,14 @@ function customPanel(): Panel {
   }
 }
 
+/** Any panelist with a Synthesia intro but no Synthesia portrait yet gets a still from the intro. */
+async function syncSynthesiaPortraits(current: Assets, personas: Persona[]): Promise<Assets> {
+  const pending = personas.filter((p) => current[introKey(p)] && !hasSynthesiaPortrait(p, current))
+  if (!pending.length) return current
+  await Promise.allSettled(pending.map((p) => saveSynthesiaPortrait(p, current[introKey(p)])))
+  return loadAssets()
+}
+
 export function Setup({ status, stream, streamError, onRequestMedia, onStart, onOpenSession }: Props) {
   const [panelId, setPanelId] = useState(PANELS[0].id)
   const [custom, setCustom] = useState<Panel>(customPanel)
@@ -54,6 +67,7 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
   const [assets, setAssets] = useState<Assets>({})
   const [mediaBusy, setMediaBusy] = useState<string | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
+  const [playingIntro, setPlayingIntro] = useState<Persona | null>(null)
   const [history, setHistory] = useState<{ id: string; title: string; startedAt: string; overall: number | null }[]>([])
   const fileInput = useRef<HTMLInputElement>(null)
   const preview = useRef<HTMLVideoElement>(null)
@@ -62,7 +76,9 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
   const panel = panelId === 'custom' ? custom : PANELS.find((p) => p.id === panelId)!
 
   useEffect(() => {
-    void loadAssets().then(setAssets)
+    void loadAssets()
+      .then((a) => syncSynthesiaPortraits(a, PANELS.flatMap((p) => p.personas)))
+      .then(setAssets)
     getJson<typeof history>('/api/sessions', 5000).then(setHistory, () => setHistory([]))
   }, [])
 
@@ -155,11 +171,37 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
     }
   }
 
+  /** A Synthesia avatar face and a short spoken intro per panelist. Renders take a few minutes on Synthesia. */
+  async function generateSynthesiaFaces(force = false) {
+    setMediaError(null)
+    setMediaBusy('Sending the panel to Synthesia')
+    try {
+      await Promise.all(panel.personas.map((p, i) => startSynthesiaFace(panel, p, i, force)))
+      for (;;) {
+        const states = await Promise.all(panel.personas.map((p) => synthesiaStatus(p)))
+        const done = states.filter((s) => s.status !== 'running').length
+        setMediaBusy(`Synthesia is rendering faces: ${done} of ${panel.personas.length} ready`)
+        setAssets(await loadAssets().then((a) => syncSynthesiaPortraits(a, panel.personas)))
+        if (done === panel.personas.length) {
+          const errors = states.filter((s) => s.status === 'failed').map((s) => s.error)
+          if (errors.length) setMediaError(`Synthesia could not render ${errors.length} face(s): ${errors[0]}`)
+          break
+        }
+        await new Promise((r) => setTimeout(r, 5000))
+      }
+    } catch (err) {
+      setMediaError(errorText(err))
+    } finally {
+      setMediaBusy(null)
+    }
+  }
+
   function updatePersona(i: number, patch: Partial<Persona>) {
     setCustom((c) => ({ ...c, personas: c.personas.map((p, j) => (j === i ? { ...p, ...patch } : p)) }))
   }
 
   const hasPortraits = panel.personas.every((p) => assets[portraitKey(p)])
+  const hasIntros = panel.personas.every((p) => assets[introKey(p)])
   const clipCount = panel.personas.reduce((n, p) => n + REACTIONS.filter((r) => assets[reactionKey(p, r)]).length, 0)
   const canStart = Boolean(stream) && !pdfState.busy && panel.personas.length > 0
 
@@ -195,7 +237,7 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
               <div>
                 {custom.personas.map((p, i) => (
                   <div key={p.id} className="persona-edit">
-                    <span className="avatar" style={{ width: 56, height: 56 }}>
+                    <span className="avatar" style={{ width: 56, height: 56, cursor: assets[introKey(p)] ? 'pointer' : undefined }} onClick={() => assets[introKey(p)] && setPlayingIntro(p)} title={assets[introKey(p)] ? 'Play intro' : undefined}>
                       {assets[portraitKey(p)] ? <img src={assets[portraitKey(p)]} alt="" /> : initials(p.name)}
                     </span>
                     <div className="stack" style={{ gap: 8 }}>
@@ -241,25 +283,57 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
                     <span className="avatar" style={{ width: 36, height: 36 }}>
                       {assets[portraitKey(p)] ? <img src={assets[portraitKey(p)]} alt="" /> : initials(p.name)}
                     </span>
-                    <div>
+                    <div style={{ flex: 1 }}>
                       <div>
                         {p.name} <span className="faint">· {p.role}</span>
                       </div>
                       <div className="faint">{p.personality}</div>
                     </div>
+                    {assets[introKey(p)] && (
+                      <button className="btn quiet small" onClick={() => setPlayingIntro(p)} aria-label={`Play ${p.name}'s intro`}>
+                        ▶ Intro
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
             )}
 
-            {status.fal && (
+            {playingIntro && assets[introKey(playingIntro)] && (
+              <div className="intro-player">
+                <video key={playingIntro.id} src={assets[introKey(playingIntro)]} autoPlay playsInline controls onEnded={() => setPlayingIntro(null)} />
+                <div className="row small">
+                  <span className="faint">{playingIntro.name} says hello</span>
+                  <span className="spacer" />
+                  <button className="btn quiet" onClick={() => setPlayingIntro(null)}>
+                    Close
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {(status.fal || status.synthesia) && (
               <div className="row small" style={{ flexWrap: 'wrap' }}>
-                <button className="btn" onClick={generatePanelImages} disabled={Boolean(mediaBusy)}>
-                  {hasPortraits ? 'Regenerate missing images' : 'Generate room and portraits'}
-                </button>
-                <button className="btn quiet" onClick={generateReactions} disabled={Boolean(mediaBusy) || !hasPortraits}>
-                  Animate reactions
-                </button>
+                {status.synthesia && (
+                  <button
+                    className="btn"
+                    onClick={() => void generateSynthesiaFaces()}
+                    disabled={Boolean(mediaBusy) || hasIntros}
+                    title="Render a Synthesia avatar and a spoken intro for each panelist. Takes a few minutes."
+                  >
+                    {hasIntros ? 'Synthesia faces ready' : 'Synthesia faces'}
+                  </button>
+                )}
+                {status.fal && (
+                  <>
+                    <button className="btn quiet" onClick={generatePanelImages} disabled={Boolean(mediaBusy)}>
+                      {hasPortraits ? 'Regenerate missing images' : 'Generate room and portraits'}
+                    </button>
+                    <button className="btn quiet" onClick={generateReactions} disabled={Boolean(mediaBusy) || !hasPortraits}>
+                      Animate reactions
+                    </button>
+                  </>
+                )}
                 <span className="faint">{mediaBusy ?? (clipCount ? `${clipCount} reaction clips ready` : '')}</span>
               </div>
             )}
@@ -364,8 +438,9 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
             <div className="row small" style={{ flexWrap: 'wrap', gap: 8 }}>
               <span className="chip"><i className={`dot ${status.elevenlabs ? 'on' : ''}`} /> Transcript</span>
               <span className="chip"><i className={`dot ${status.anthropic ? 'on' : ''}`} /> Questions and evaluation</span>
-              <span className="chip"><i className={`dot ${status.anam ? 'on' : status.elevenlabsAgent ? 'on' : ''}`} /> {status.anam ? 'Avatar panel' : 'Voice panel'}</span>
+              <span className="chip"><i className={`dot ${status.anam ? 'on' : status.elevenlabsAgent ? 'on' : ''}`} /> {status.anam ? 'Live avatar' : 'Voice panel'}</span>
               <span className="chip"><i className={`dot ${status.fal ? 'on' : ''}`} /> Generated media</span>
+              <span className="chip"><i className={`dot ${status.synthesia ? 'on' : ''}`} /> Synthesia faces</span>
             </div>
             {!status.elevenlabs && <p className="faint">Without a transcript, pace and fillers cannot be measured. Add an ElevenLabs key to the .env file.</p>}
           </section>

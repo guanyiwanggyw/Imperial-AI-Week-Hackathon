@@ -7,6 +7,17 @@
 
 ## Log
 
+### 2026-11-14: merged Guanyi's "one avatar" (77f8a50) into `jihu/evaluation-engine`
+
+- I read `updates/Guanyi.md` first.
+- **Conflicts resolved:**
+  - `Session.tsx`: kept both sides. During the countdown the avatar warms up and calibration runs.
+  - `Audience.tsx`: `REACTION_LABEL` now comes from `lib/reactions`.
+- **Spoken Q&A mode** (`speakAs`) never fires `onSpeaking`, so `Session.tsx` now wraps `ctx.say` to log each agent line as an `AgentTurn`. The turn starts at first audio (`latencyMs`), ends when the speech ends, and keeps the `interrupted` flag.
+- **Voice-agent mode** still logs turns through `onSpeaking` and `onCaption`.
+- **API change:** `EvalSession.agentSpeaking()` takes an optional `{ startAt, interrupted }` when it closes a turn.
+- **Checks:** web, server and CLI typecheck, `vite build` passes, and the calibration tool runs.
+
 ### 2026-11-14: evaluation engine moved into `web/src/eval/`, scores now 0–100
 
 **Moved (git mv, history kept)**

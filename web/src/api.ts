@@ -6,9 +6,10 @@ export interface Status {
   elevenlabsAgent: boolean
   anam: boolean
   fal: boolean
+  synthesia: boolean
 }
 
-const OFFLINE: Status = { anthropic: false, elevenlabs: false, elevenlabsAgent: false, anam: false, fal: false }
+const OFFLINE: Status = { anthropic: false, elevenlabs: false, elevenlabsAgent: false, anam: false, fal: false, synthesia: false }
 
 async function request<T>(url: string, init: RequestInit = {}, timeoutMs = 15000): Promise<T> {
   const controller = new AbortController()

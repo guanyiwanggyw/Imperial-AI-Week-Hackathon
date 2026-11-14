@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { postForm, type Status } from '../api'
+import { decisionMaker, MainAvatar, speakAs } from '../avatar/mainAvatar'
 import { buildReport } from '../eval/evaluate'
 import { LiveEventEngine } from '../eval/liveEvents'
 import { deliveryStats, eyeContactShare, fillerIndices, formatTime, timestampedTranscript, wpmBetween } from '../eval/metrics'
@@ -9,7 +10,7 @@ import { planQuestions, runTurn, type QnaMode } from '../lib/qna'
 import { chooseReaction } from '../lib/reactions'
 import { SessionRecorder } from '../lib/recorder'
 import type { QnaTurn, SessionConfig, SessionData, SessionEvent, Word } from '../types'
-import { anamVideoId, Audience, type ActiveReaction } from './Audience'
+import { Audience, type ActiveReaction } from './Audience'
 
 interface Props {
   config: SessionConfig
@@ -46,8 +47,9 @@ class Clock {
   }
 }
 
+/** The live avatar wins when configured; otherwise the ElevenLabs agent; otherwise spoken by the browser. */
 function initialMode(status: Status): QnaMode {
-  return status.anam ? 'anam' : status.elevenlabsAgent ? 'voice' : 'browser'
+  return !status.anam && status.elevenlabsAgent ? 'voice' : 'spoken'
 }
 
 export function Session({ config, stream, status, onDone, onCancel }: Props) {
@@ -62,6 +64,9 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const evalRt = evalRef.current
   const transcript = evalRt.transcript
   const selfView = useRef<HTMLVideoElement>(null)
+  // One live main avatar for the whole session, voiced by the decision-maker.
+  const avatar = useRef(new MainAvatar()).current
+  const mainPersona = decisionMaker(panel.personas)
 
   const [phase, setPhase] = useState<Phase>('countdown')
   const phaseRef = useRef<Phase>('countdown')
@@ -102,6 +107,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
       if (e.type === 'tool_called' && e.detail) setToolNotes((n) => [...n, e.detail!.split(': ').slice(1).join(': ')])
       if (phaseRef.current !== 'pitch') return
       panel.personas.forEach((p) => {
+        // The live avatar idles on its own; reaction clips are for the still portraits.
+        if (p.id === mainPersona?.id && avatar.getState().status === 'live') return
         const reaction = chooseReaction(p, e)
         if (!reaction) return
         // Stagger so the panel does not react in unison.
@@ -110,7 +117,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
         }, 300 + Math.random() * 1200)
       })
     },
-    [panel.personas],
+    [panel.personas, mainPersona, avatar],
   )
   const engine = useRef<LiveEventEngine | null>(null)
   engine.current ??= new LiveEventEngine(onEvent)
@@ -119,6 +126,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
 
   useEffect(() => {
     stopQna.current = false
+    // Warm the avatar during the countdown so it is live (and idling) when the pitch starts.
+    if (mainPersona) void avatar.warm(mainPersona, { anam: status.anam })
     if (selfView.current) {
       selfView.current.srcObject = stream
       // Calibrate during the countdown: the speaker looks at the panel and stands naturally.
@@ -144,6 +153,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
       evalRt.stop()
       skipRef.current?.abort()
       stopQna.current = true
+      void avatar.stop()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -274,10 +284,26 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
             .filter((w) => w.start >= from && w.start <= to)
             .map((w) => w.text)
             .join(' '),
+        getAnswerWords: (from: number) => transcript.words.filter((w) => w.start >= from),
+        say: async (text: string, signal: AbortSignal) => {
+          // Spoken mode: log the agent line for the evaluation (starts at first audio, ends when speech ends).
+          const askedAt = clock.now()
+          evalRt.agentSpeaking(true, persona.name)
+          evalRt.agentCaption(text)
+          try {
+            const log = await speakAs(avatar, persona, seat, text, signal)
+            evalRt.agentSpeaking(false, persona.name, { startAt: askedAt + (log.latencyMs ?? 0) / 1000, interrupted: log.interrupted })
+            return log
+          } catch (err) {
+            evalRt.agentSpeaking(false, persona.name)
+            throw err
+          }
+        },
         onEvent: (e: SessionEvent) => {
           engine.current!.events.push(e)
           onEvent(e)
         },
+        // Voice-agent mode reports speaking and captions through these.
         onSpeaking: (on: boolean) => {
           setSpeaking(on)
           evalRt.agentSpeaking(on, persona.name)
@@ -286,11 +312,10 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
           setCaption(text)
           evalRt.agentCaption(text)
         },
-        videoElementId: anamVideoId(persona.id),
       }
       let turn: QnaTurn | null = null
       // Try the richest mode first, then fall back so the demo never stalls.
-      const modes: QnaMode[] = modeRef.current === 'anam' ? ['anam', 'voice', 'browser'] : modeRef.current === 'voice' ? ['voice', 'browser'] : ['browser']
+      const modes: QnaMode[] = modeRef.current === 'voice' ? ['voice', 'spoken'] : ['spoken']
       for (const m of modes) {
         try {
           setMode(m)
@@ -298,8 +323,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
           break
         } catch (err) {
           console.warn(`Q&A mode ${m} failed:`, err)
-          modeRef.current = m === 'anam' ? 'voice' : 'browser'
-          setNotice(m === 'anam' ? 'The avatar could not connect, so the panel is asking by voice.' : 'The voice agent could not connect, so questions are read by the browser.')
+          modeRef.current = 'spoken'
+          setNotice('The voice agent could not connect, so the panel is speaking the questions instead.')
         }
       }
       if (turn) {
@@ -317,6 +342,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
     if (phaseRef.current === 'finishing') return
     stopQna.current = true
     skipRef.current?.abort()
+    void avatar.stop()
     setPhaseBoth('finishing')
     const duration = clock.now()
     if (!pitchEnd.current) pitchEnd.current = duration
@@ -440,8 +466,9 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
             reactions={reactions}
             onReactionEnd={(id) => setReactions((r) => ({ ...r, [id]: undefined }))}
             activeId={phase === 'qna' ? activeId : null}
-            speaking={speaking}
-            mode={mode}
+            avatar={avatar}
+            mainId={mainPersona?.id}
+            speakingId={mode === 'voice' && speaking ? activeId : null}
           />
 
           {(phase === 'qna' || phase === 'conferring') && (
@@ -500,7 +527,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
         )}
         <span className="phase">
           {phase === 'pitch' && (over ? 'Time is up. Wrap up when ready.' : 'The panel is listening')}
-          {phase === 'qna' && (mode === 'browser' ? 'Answer aloud, then move to the next question' : 'Answer aloud. The panelist will follow up if needed.')}
+          {phase === 'qna' && (mode === 'spoken' ? 'Answer aloud. The next question comes when you finish.' : 'Answer aloud. The panelist will follow up if needed.')}
           {notice && <span className="faint"> · {notice}</span>}
         </span>
         <span className="spacer" />
@@ -517,7 +544,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
         {phase === 'qna' && (
           <>
             <button className="btn quiet" onClick={() => skipRef.current?.abort()}>
-              {mode === 'browser' ? 'Next question' : 'Skip question'}
+              {mode === 'spoken' ? 'Next question' : 'Skip question'}
             </button>
             <button className="btn primary" onClick={() => void finish()}>
               Finish and see report

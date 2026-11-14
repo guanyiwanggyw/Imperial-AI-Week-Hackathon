@@ -124,12 +124,16 @@ export class EvalSession {
 
   // ---------- agent hooks (Q&A) ----------
 
-  /** Wire to the agent's speaking state. Opens an AgentTurn when speech starts and closes it when it stops. */
-  agentSpeaking(speaking: boolean, agent: string) {
+  /**
+   * Wire to the agent's speaking state. Opens an AgentTurn when speech starts and closes it when it stops.
+   * When closing, `startAt` (session seconds of the first audio) and `interrupted` refine the turn.
+   */
+  agentSpeaking(speaking: boolean, agent: string, close: { startAt?: number; interrupted?: boolean } = {}) {
     const t = this.now()
     if (speaking && !this.openTurn) this.openTurn = { t, agent, text: '' }
     else if (!speaking && this.openTurn) {
-      this.addAgentTurn({ ...this.openTurn, end: t, interrupted: false })
+      const start = close.startAt !== undefined ? Math.min(Math.max(close.startAt, this.openTurn.t), t) : this.openTurn.t
+      this.addAgentTurn({ ...this.openTurn, t: start, end: t, interrupted: close.interrupted ?? false })
       this.openTurn = null
     }
   }

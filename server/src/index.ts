@@ -4,6 +4,8 @@ import fs from "node:fs";
 import { DATA_DIR, ROOT, env, integrationStatus } from "./env.js";
 import { voiceRouter } from "./voice.js";
 import { mediaRouter } from "./media.js";
+import { synthesiaRouter } from "./synthesia.js";
+import { avatarRouter } from "./avatar.js";
 import { llmRouter } from "./llm.js";
 import { sessionsRouter } from "./sessions.js";
 import { evalRouter } from "./eval/judge.js";
@@ -13,6 +15,8 @@ app.use(express.json({ limit: "25mb" }));
 
 app.get("/api/status", (_req, res) => res.json(integrationStatus()));
 app.use("/api/voice", voiceRouter);
+app.use("/api/avatar", avatarRouter);
+app.use("/api/media/synthesia", synthesiaRouter);
 app.use("/api/media", mediaRouter);
 app.use("/api/llm", llmRouter);
 app.use("/api/sessions", sessionsRouter);

@@ -1,14 +1,14 @@
-// Q&A orchestration. One panelist turn at a time, in one of three modes:
-//  - anam:    Anam avatar whose brain and voice is our ElevenLabs agent (wired server-side by Anam)
-//  - voice:   the same ElevenLabs agent, voice only (no avatar)
-//  - browser: browser speech synthesis reads the question; the answer comes from the live transcript
-// In the first two modes the agent calls our client tools (transcript, slides, metrics, assessment, end).
-import { AnamEvent, createClient, MessageRole, type AnamClient, type Message } from '@anam-ai/js-sdk'
+// Q&A orchestration. One panelist turn at a time, in one of two modes:
+//  - spoken: the question is said through the main avatar (live Anam for the decision-maker,
+//            a voice for the other panelists; browser speech when nothing is configured).
+//            The answer comes from the live transcript.
+//  - voice:  the ElevenLabs agent asks, listens and follows up, calling our client tools.
 import { Conversation } from '@elevenlabs/client'
 import { getJson, postJson } from '../api'
+import type { SpeechLog } from '../avatar/mainAvatar'
 import type { Persona, QnaTurn, SessionEvent, Slide } from '../types'
 
-export type QnaMode = 'anam' | 'voice' | 'browser'
+export type QnaMode = 'spoken' | 'voice'
 
 export interface PlannedQuestion {
   persona_id: string
@@ -21,12 +21,15 @@ export interface TurnContext {
   now: () => number
   getTranscript: () => string
   getMetricsSummary: () => string
-  /** Answer text heard by the live transcriber between two times (used in browser mode). */
+  /** Answer text heard by the live transcriber between two times (spoken mode). */
   getAnswerBetween: (from: number, to: number) => string
+  /** Words heard since a time, to detect the end of an answer (spoken mode). */
+  getAnswerWords: (from: number) => { end: number }[]
   onEvent: (e: SessionEvent) => void
   onSpeaking: (speaking: boolean) => void
   onCaption: (text: string) => void
-  videoElementId: string
+  /** Says a line as this persona (main avatar or voice). See avatar/mainAvatar.ts speakAs. */
+  say: (text: string, signal: AbortSignal) => Promise<SpeechLog>
 }
 
 const TURN_LIMIT_MS = 150_000
@@ -111,72 +114,14 @@ export async function runTurn(
   ctx: TurnContext,
   skip: AbortSignal,
 ): Promise<QnaTurn> {
-  if (mode === 'anam') return runAnamTurn(persona, seat, q, ctx, skip)
   if (mode === 'voice') return runVoiceTurn(persona, seat, q, ctx, skip)
-  return runBrowserTurn(persona, q, ctx, skip)
-}
-
-async function runAnamTurn(persona: Persona, seat: number, q: PlannedQuestion, ctx: TurnContext, skip: AbortSignal) {
-  const { sessionToken } = await postJson<{ sessionToken: string }>(
-    '/api/voice/anam-session',
-    {
-      seat,
-      voiceId: persona.voiceId,
-      idleStyle: persona.idleStyle,
-      expressivity: 0.3 + persona.expression.smile * 0.4,
-      dynamicVariables: dynamicVariables(persona, q, seat),
-    },
-    20000,
-  )
-  const turn = newTurn(persona, q, ctx.now())
-  const client: AnamClient = createClient(sessionToken)
-  let history: Message[] = []
-
-  await new Promise<void>((resolve) => {
-    let done = false
-    const finish = async (delayMs: number) => {
-      if (done) return
-      done = true
-      window.setTimeout(async () => {
-        try {
-          await client.stopStreaming()
-        } catch {
-          // already closed
-        }
-        resolve()
-      }, delayMs)
-    }
-    const tools = makeTools(persona, ctx, turn, () => void finish(2500))
-    for (const [name, fn] of Object.entries(tools)) {
-      client.registerToolCallHandler(name, { onStart: async (payload) => fn(payload.arguments as never) })
-    }
-    client.addListener(AnamEvent.MESSAGE_HISTORY_UPDATED, (messages) => {
-      history = messages
-    })
-    client.addListener(AnamEvent.MESSAGE_STREAM_EVENT_RECEIVED, (e) => {
-      if (e.role === MessageRole.PERSONA) {
-        ctx.onSpeaking(!e.endOfSpeech)
-        if (e.content) ctx.onCaption(e.content)
-      }
-    })
-    client.addListener(AnamEvent.CONNECTION_CLOSED, () => void finish(0))
-    skip.addEventListener('abort', () => void finish(0))
-    window.setTimeout(() => void finish(0), TURN_LIMIT_MS)
-    client.streamToVideoElement(ctx.videoElementId).catch(() => void finish(0))
-  })
-
-  ctx.onSpeaking(false)
-  turn.end = ctx.now()
-  applyTranscript(
-    turn,
-    history.map((m) => ({ role: m.role === MessageRole.PERSONA ? 'persona' : 'user', text: m.content })),
-  )
-  return turn
+  return runSpokenTurn(persona, q, ctx, skip)
 }
 
 async function runVoiceTurn(persona: Persona, seat: number, q: PlannedQuestion, ctx: TurnContext, skip: AbortSignal) {
   const { signedUrl } = await getJson<{ signedUrl: string }>('/api/voice/signed-url', 10000)
   const turn = newTurn(persona, q, ctx.now())
+  turn.provider = 'elevenlabs'
   const lines: { role: 'persona' | 'user'; text: string }[] = []
 
   await new Promise<void>((resolve, reject) => {
@@ -224,36 +169,31 @@ async function runVoiceTurn(persona: Persona, seat: number, q: PlannedQuestion, 
   return turn
 }
 
-function speak(text: string, persona: Persona, seat: number, skip: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    if (!('speechSynthesis' in window) || skip.aborted) return resolve()
-    skip.addEventListener('abort', () => {
-      speechSynthesis.cancel()
-      resolve()
-    })
-    const u = new SpeechSynthesisUtterance(text)
-    const voices = speechSynthesis.getVoices().filter((v) => v.lang.startsWith('en'))
-    if (voices.length) u.voice = voices[seat % voices.length]
-    u.rate = 1 - (persona.strictness - 3) * 0.03
-    u.onend = () => resolve()
-    u.onerror = () => resolve()
-    window.setTimeout(resolve, 20000)
-    speechSynthesis.speak(u)
-  })
-}
+/** The user has answered once they spoke and then stayed quiet this long. */
+const ANSWER_SILENCE_S = 4
+const ANSWER_LIMIT_MS = 90_000
 
-async function runBrowserTurn(persona: Persona, q: PlannedQuestion, ctx: TurnContext, skip: AbortSignal) {
+async function runSpokenTurn(persona: Persona, q: PlannedQuestion, ctx: TurnContext, skip: AbortSignal) {
   const turn = newTurn(persona, q, ctx.now())
   ctx.onCaption(q.question)
-  ctx.onSpeaking(true)
-  await speak(q.question, persona, persona.id.length, skip)
-  ctx.onSpeaking(false)
+  const spoken = await ctx.say(q.question, skip)
+  turn.provider = spoken.provider
+  turn.latencyMs = spoken.latencyMs
   const answerFrom = ctx.now()
-  // Wait for the user to click "next question", or the turn limit.
+  // Wait for "next question", for the user to answer and fall quiet, or for the time limit.
   await new Promise<void>((resolve) => {
     if (skip.aborted) return resolve()
-    skip.addEventListener('abort', () => resolve())
-    window.setTimeout(resolve, 90_000)
+    const started = performance.now()
+    const timer = window.setInterval(() => {
+      const answer = ctx.getAnswerWords(answerFrom)
+      const quietFor = answer.length ? ctx.now() - answer[answer.length - 1].end : 0
+      if (quietFor > ANSWER_SILENCE_S || performance.now() - started > ANSWER_LIMIT_MS) done()
+    }, 500)
+    const done = () => {
+      window.clearInterval(timer)
+      resolve()
+    }
+    skip.addEventListener('abort', done)
   })
   turn.end = ctx.now()
   // Give the transcriber a moment to commit the last words.
