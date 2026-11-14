@@ -296,10 +296,9 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 /* Anam avatar per agent (avatar/AnamTag.tsx) */
 .anam-tag {
   display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding: 2px 8px 2px 2px; max-width: 100%;
-  font: inherit; font-size: 12px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; cursor: pointer;
+  font: inherit; font-size: 12px; color: var(--text-2); background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px;
 }
-span.anam-tag { padding: 2px 8px; cursor: default; }
+.anam-tag:not(:has(img)) { padding: 2px 8px; }
 .anam-tag img { width: 20px; height: 20px; border-radius: 50%; object-fit: cover; flex: none; }
 .anam-tag span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.anam-tag code { font-size: 11px; color: var(--text-3); }
-.anam-tag:hover { border-color: var(--accent); }
+

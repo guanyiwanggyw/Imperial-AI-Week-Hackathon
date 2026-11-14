@@ -8,6 +8,58 @@ I read the other `updates/*.md` files before each change.
 
 ---
 
+## 2026-11-14: Realistic human avatars only; no keys or ids in the UI
+
+I read all of `updates/*.md` first and pulled `c7c32a1`. Jihu's new entries (workspace header, mouth-gated speech, panel-leak filtering, tracking debug page) don't touch my files. Thanks for handling the panel-audio note in `assemble.ts`. Alfaa's and Derek's files are empty.
+
+### Realistic avatars
+- Anam's catalogue has 120 avatars with three `renderStyle`s: 80 `realistic`, 27 `illustrated` and 13 `animated_3d`. Four of our agents were on illustrated or 3D avatars:
+  - Priya: Chloe, illustrated
+  - Elena: Marie, 3D
+  - Sam: Kevin, illustrated
+  - Tom: Alister, 3D
+- **Server (`server/src/avatar.ts`):**
+  - Matching only uses `renderStyle === "realistic"` (Cara 4) avatars.
+  - An agent's own id, or `ANAM_AVATAR_ID`, that points at a non-realistic avatar (or one not on the account) is ignored with a warning, and a realistic one is matched instead.
+  - `GET /api/avatar/anam-options` lists realistic avatars only.
+- **New ids in `web/src/personas.ts`:** picked by hand against each agent's description, because word matching missed age. All are realistic and all are different:
+
+| Agent | Avatar | `anamAvatarId` |
+| --- | --- | --- |
+| Priya Shah | Kiara (mature, pinstripe blazer, city office) | `42675ef1-2342-45d8-9603-9bd92ed45699` |
+| Marcus Webb | Gabriel (salt-and-pepper hair and beard) | `917ff800-24e8-41a0-9621-4adea170d9f5` |
+| Elena Kovac | Elena (glasses, blazer) | `5e96a4a4-4a1d-4ead-a5c9-122627d91655` |
+| Sam Okafor | Kevin, realistic variant (dark green pullover) | `ccf00c0e-7302-455b-ace2-057e0cf58127` |
+| Maya Lindqvist | Astrid (unchanged) | `bdaaedfa-00f2-417a-8239-8bb89adec682` |
+| James Holloway | Marcus (unchanged) | `c8601ae3-9686-4f1f-8e32-7499b470f6b5` |
+| Aisha Rahman | Antonia (unchanged) | `a7eb25e8-8c31-460d-a397-8cd8010c76d1` |
+| Tom Becker | Leo (textured hair, beard, dark t-shirt) | `d73415e3-d624-45a6-a461-0df1580e73d6` |
+
+  Voices are unchanged. Custom agents now match realistic avatars too (in the test, Olivia and Micah).
+
+### No keys or ids in the UI
+- **`AnamTag`** shows only the avatar's face, name and voice name. The ids, the click-to-copy and the id tooltip are removed.
+- **Custom panel:** the "Anam avatar id" text field is removed. Custom agents are matched automatically. Ids still live in code (`personas.ts`) and in this log, never on screen.
+- **New `server/src/redact.ts`**, mounted on `/api` in `server/src/index.ts` (one line):
+  - Every API response is scrubbed of the values of `.env` variables named …KEY, …SECRET, …TOKEN or …PASSWORD; they're replaced with `[redacted]`.
+  - The routes never send keys on purpose. This catches upstream error messages that the UI displays (media errors, transcript errors, avatar badge tooltips).
+  - Per-request tokens the browser needs (Anam session token, Scribe single-use token) aren't in `.env` and pass through unchanged.
+  - **Note for Jihu:** this covers `res.json` / `res.send`, not `res.write`, so the SSE stream in `/api/eval/final` is not scrubbed. It only carries Claude text.
+
+### Verified
+- **Middleware:** a fake key inside an upstream error was returned as `[redacted]`.
+- **`vite build` output** (11 files): no `.env` secret values (`ANAM_API_KEY`, `ELEVENLABS_API_KEY`, `SYNTHESIA_API_KEY`). The client never reads keys; Vite only exposes `VITE_*` variables, and there are none.
+- **Live API responses** (status, sessions, media assets, anam-options, anam-match, scribe-token): no secret values.
+- **Real UI** (headless Chrome):
+  - The setup screen on all four panels, and the live session, contain no UUIDs and no key-like text in visible text, tooltips or inputs.
+  - All three investors went live, as photorealistic people (screenshot checked).
+
+### Files
+- `server/src/avatar.ts`, `server/src/redact.ts` (new), `server/src/index.ts` (mounts the redaction)
+- `web/src/personas.ts`, `web/src/avatar/AnamTag.tsx`, `web/src/components/Setup.tsx`, `web/src/index.css`, `README.md`
+
+---
+
 ## 2026-11-14: Every agent is a live Anam avatar
 
 I read `updates/*.md` first. Nothing had changed since my last entry.
