@@ -14,7 +14,8 @@ import { useSyncExternalStore } from 'react'
 import type { Persona } from '../types'
 import { AnamDriver, BrowserSpeechDriver, type AvatarDriver, type AvatarProvider } from './drivers'
 
-export type AvatarStatus = 'idle' | 'connecting' | 'live' | 'fallback'
+/** waiting: on the browser voice while retrying a live session (e.g. the Anam concurrency limit). */
+export type AvatarStatus = 'idle' | 'connecting' | 'live' | 'waiting' | 'fallback'
 
 export interface SeatState {
   status: AvatarStatus
@@ -112,27 +113,67 @@ export class PanelAvatars {
     const onSpeaking = (s: boolean) => this.setSpeaking(persona.id, s)
     const job = (async () => {
       if (opts.anam) {
-        const anam = new AnamDriver(onSpeaking)
-        try {
-          await anam.connect(persona, avatarSlotId(persona.id))
-          // stop() ran while connecting (e.g. React StrictMode remount): close, never leak a paid session.
-          if (generation !== this.generation) return void anam.stop()
-          this.drivers.set(persona.id, anam)
-          this.setSeat(persona.id, { status: 'live', provider: 'anam' })
+        const result = await this.tryAnam(persona, onSpeaking, generation)
+        if (result === 'live' || result === 'stale') return
+        if (isTransient(result)) {
+          // The account's concurrent-session limit (or a blip): speak with the browser voice for now
+          // and keep trying in the background; the seat turns live as soon as a session frees up.
+          this.useBrowser(persona, seat, onSpeaking, 'waiting', result)
+          void this.retryAnam(persona, onSpeaking, generation)
           return
-        } catch (err) {
-          console.warn(`[avatar] ${persona.id}: Anam unavailable, using the browser voice:`, err)
-          void anam.stop()
-          if (generation !== this.generation) return
-          this.setSeat(persona.id, { error: err instanceof Error ? err.message : String(err) })
         }
+        if (generation !== this.generation) return
+        this.setSeat(persona.id, { error: result })
       }
       if (generation !== this.generation) return
-      this.drivers.set(persona.id, new BrowserSpeechDriver(onSpeaking, seat, rateFor(persona)))
-      this.setSeat(persona.id, { status: 'fallback', provider: 'browser' })
+      this.useBrowser(persona, seat, onSpeaking, 'fallback')
     })()
     this.warming.set(persona.id, job)
     return job
+  }
+
+  /** One attempt at a live Anam session for this agent. Returns 'live', 'stale' (stop() ran meanwhile) or the error. */
+  private async tryAnam(persona: Persona, onSpeaking: (s: boolean) => void, generation: number): Promise<'live' | 'stale' | string> {
+    const anam = new AnamDriver(onSpeaking)
+    try {
+      await anam.connect(persona, avatarSlotId(persona.id))
+      // stop() ran while connecting (e.g. React StrictMode remount): close, never leak a paid session.
+      if (generation !== this.generation) {
+        void anam.stop()
+        return 'stale'
+      }
+      this.drivers.set(persona.id, anam)
+      this.setSeat(persona.id, { status: 'live', provider: 'anam', error: null })
+      return 'live'
+    } catch (err) {
+      console.warn(`[avatar] ${persona.id}: Anam unavailable:`, err)
+      void anam.stop()
+      return generation !== this.generation ? 'stale' : err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  /** Retries a live session with backoff while the practice session lasts. Swaps in between lines. */
+  private async retryAnam(persona: Persona, onSpeaking: (s: boolean) => void, generation: number) {
+    for (const delay of RETRY_DELAYS_MS) {
+      await new Promise((r) => window.setTimeout(r, delay))
+      if (generation !== this.generation) return
+      // Never swap mid-line: wait until this agent is quiet.
+      while (this.state.speakingId === persona.id) {
+        await new Promise((r) => window.setTimeout(r, 500))
+        if (generation !== this.generation) return
+      }
+      const result = await this.tryAnam(persona, onSpeaking, generation)
+      if (result === 'live') return console.info(`[avatar] ${persona.id}: live avatar connected after retry`)
+      if (result === 'stale') return
+      this.setSeat(persona.id, { error: result })
+      if (!isTransient(result)) break
+    }
+    if (generation === this.generation) this.setSeat(persona.id, { status: 'fallback' })
+  }
+
+  private useBrowser(persona: Persona, seat: number, onSpeaking: (s: boolean) => void, status: 'waiting' | 'fallback', error?: string) {
+    this.drivers.set(persona.id, new BrowserSpeechDriver(onSpeaking, seat, rateFor(persona)))
+    this.setSeat(persona.id, { status, provider: 'browser', ...(error ? { error } : {}) })
   }
 
   private setSpeaking(personaId: string, speaking: boolean) {
@@ -236,6 +277,12 @@ export function decisionMaker(personas: Persona[]): Persona | undefined {
 }
 
 const rateFor = (p: Persona) => 1 - (p.strictness - 3) * 0.03
+
+/** Backoff between live-avatar retries: about 4 minutes in total. */
+const RETRY_DELAYS_MS = [3000, 5000, 8000, 10000, 15000, 15000, 20000, 20000, 30000, 30000, 30000, 30000]
+
+/** Errors worth retrying: the account's concurrent-session limit, rate limits, timeouts, server errors. */
+const isTransient = (error: string) => /concurren|limit|429|too many|timed? ?out|in time|50[0-9]|network|fetch/i.test(error)
 
 export function useAvatarState(avatars: PanelAvatars) {
   return useSyncExternalStore(avatars.subscribe, avatars.getState)

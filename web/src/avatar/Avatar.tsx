@@ -14,6 +14,7 @@ interface Props {
 const LABEL: Record<string, string> = {
   connecting: 'Connecting avatar',
   live: 'Live',
+  waiting: 'Waiting for avatar',
   fallback: 'Voice only',
 }
 

@@ -13,7 +13,7 @@ import type { Persona, QnaTurn, SessionConfig, SessionData, SessionEvent, Word }
 import { Orchestrator } from '../agents/orchestrator'
 import recordingDot from '../assets/recording-dot.svg'
 import { Audience, type ActiveReaction } from './Audience'
-import { Steps, TopNav } from './Chrome'
+import { TopNav } from './Chrome'
 import { LiveCaptions } from './LiveCaptions'
 
 interface Props {
@@ -78,6 +78,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   const [countdown, setCountdown] = useState(5)
   const [paused, setPaused] = useState(false)
   const [slide, setSlide] = useState(0)
+  /** Slides on the main stage (the panel moves to the side column). Layout only: nothing remounts. */
+  const [slidesLarge, setSlidesLarge] = useState(false)
   const slideChanges = useRef<{ t: number; slide: number }[]>([])
   const [assets, setAssets] = useState<Assets>({})
   const [reactions, setReactions] = useState<Record<string, ActiveReaction | undefined>>({})
@@ -154,7 +156,12 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   useEffect(() => {
     stopQna.current = false
     // Warm every agent's avatar during the countdown so they are live (and idling) when the pitch starts.
-    void avatars.warm(panel.personas, { anam: status.anam })
+    // Deferred one tick: React StrictMode's throwaway first mount is cleaned up before this fires, so it
+    // never opens (and immediately closes) a second set of paid sessions against the concurrency limit.
+    const warmTimer = window.setTimeout(() => void avatars.warm(panel.personas, { anam: status.anam }), 0)
+    // Closing or reloading the tab skips React cleanup; end the live sessions so they free their slots.
+    const onPageHide = () => void avatars.stop()
+    window.addEventListener('pagehide', onPageHide)
     if (selfView.current) {
       selfView.current.srcObject = stream
       // Calibrate during the countdown: the speaker looks at the panel and stands naturally.
@@ -192,6 +199,8 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
       }
     }, 1000)
     return () => {
+      window.clearTimeout(warmTimer)
+      window.removeEventListener('pagehide', onPageHide)
       window.clearInterval(timer)
       orchestrator.current?.stop()
       evalRt.stop()
@@ -246,10 +255,11 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
         e.preventDefault()
         goTo(slide - 1)
       }
+      if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey && slides.length) setSlidesLarge((v) => !v)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [goTo, slide])
+  }, [goTo, slide, slides.length])
 
   const slideSeconds = slides.map((_, i) => {
     let total = 0
@@ -460,68 +470,16 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
   return (
     <div className="session">
       <TopNav active="practice" wide />
-      <div className="session-steps">
-        <div className="rp-wrap">
-          <Steps current={1} />
-        </div>
-      </div>
 
-      <div className="session-main">
+      <div className={`session-main ${slides.length === 0 ? 'no-slides' : slidesLarge ? 'slides-large' : ''}`}>
         <div className="stage">
-          <section className="stage-card">
-            <div className="stage-head">
-              <h2>Your pitch</h2>
-              <span className={`phase-pill ${phase === 'pitch' && !paused ? 'live' : ''}`}>{phaseLabel}</span>
-            </div>
-            <div className="slide-frame">
-              {slides.length ? (
-                <img src={slides[slide].image} alt={`Slide ${slide + 1}`} />
-              ) : (
-                <div className="no-slides">
-                  <strong>No slides shared</strong>
-                  <p>Speak to the panel directly.</p>
-                </div>
-              )}
-            </div>
-            {slides.length > 0 && (
-              <div className="slide-progress" aria-label="Time per slide">
-                {slides.map((s, i) => (
-                  <div key={s.index} className={i === slide ? 'current' : ''} onClick={() => goTo(i)} title={`Slide ${i + 1}: ${formatTime(slideSeconds[i])}`}>
-                    <span style={{ width: `${Math.min(100, (slideSeconds[i] / Math.max(config.pitchSeconds / slides.length, 1)) * 100)}%` }} />
-                  </div>
-                ))}
-              </div>
-            )}
-            {slides.length === 0 && !interactive && config.questionCount > 0 && phase === 'pitch' && <div className="stage-note">Your panel will ask follow-up questions after your pitch.</div>}
-          </section>
-          <section className="transcript-card">
-            <span className="eyebrow blue">Live transcript</span>
-            <LiveCaptions
-              personas={panel.personas}
-              phrases={transcript.phrases}
-              partial={transcript.partial}
-              lines={[...avatarState.lines, ...voiceLines]}
-              error={transcript.error}
-              placeholder={phase === 'pitch' ? 'Your words will appear here.' : ''}
-            />
-          </section>
-        </div>
-
-        <div className="side">
-          <div className="self-view">
-            <video ref={selfView} autoPlay muted playsInline />
-            {phase !== 'countdown' && phase !== 'finishing' && (
-              <div className="rec">
-                <img src={recordingDot} alt="" width={8} height={8} /> {paused ? 'Paused' : 'Recording'}
-              </div>
-            )}
-            <div className="you">You</div>
-          </div>
-
           <section className="panel-card">
             <div className="panel-head">
               <h2>Expert panel</h2>
-              <span>{status.anam ? 'AI · Live avatars' : 'AI · Voice only'}</span>
+              <div className="meta">
+                <span>{status.anam ? 'Live avatars' : 'Voice only'}</span>
+                <span className={`phase-pill ${phase === 'pitch' && !paused ? 'live' : ''}`}>{phaseLabel}</span>
+              </div>
             </div>
             <Audience
               personas={panel.personas}
@@ -572,9 +530,68 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
                 </div>
               </div>
             ) : (
-              phase === 'pitch' && <div className="panel-status">{interactive ? 'The panel joins in as you go' : over ? 'Time is up. Wrap up when ready.' : 'The panel is listening'}</div>
+              phase === 'pitch' && (
+                <div className="panel-status">
+                  {interactive
+                    ? 'The panel joins in as you go'
+                    : over
+                      ? 'Time is up. Wrap up when ready.'
+                      : slides.length === 0 && config.questionCount > 0
+                        ? 'The panel is listening and will ask questions after your pitch'
+                        : 'The panel is listening'}
+                </div>
+              )
             )}
           </section>
+          <section className="transcript-card">
+            <span className="eyebrow blue">Live transcript</span>
+            <LiveCaptions
+              personas={panel.personas}
+              phrases={transcript.phrases}
+              partial={transcript.partial}
+              lines={[...avatarState.lines, ...voiceLines]}
+              error={transcript.error}
+              placeholder={phase === 'pitch' ? 'Your words will appear here.' : ''}
+            />
+          </section>
+        </div>
+
+        <div className="side">
+          <div className="self-view">
+            <video ref={selfView} autoPlay muted playsInline />
+            {phase !== 'countdown' && phase !== 'finishing' && (
+              <div className="rec">
+                <img src={recordingDot} alt="" width={8} height={8} /> {paused ? 'Paused' : 'Recording'}
+              </div>
+            )}
+            <div className="you">You</div>
+          </div>
+
+          {slides.length > 0 && (
+            <section className="stage-card">
+              <div className="stage-head">
+                <h2>Your slides</h2>
+                <div className="row" style={{ gap: 8 }}>
+                  <span className="faint num">
+                    {slide + 1} / {slides.length}
+                  </span>
+                  <button className="btn quiet slide-size" onClick={() => setSlidesLarge((v) => !v)} aria-pressed={slidesLarge} title="Toggle with F">
+                    {slidesLarge ? 'Shrink' : 'Enlarge'}
+                  </button>
+                </div>
+              </div>
+              <div className="slide-frame" onDoubleClick={() => setSlidesLarge((v) => !v)}>
+                <img src={slides[slide].image} alt={`Slide ${slide + 1}`} />
+              </div>
+              <div className="slide-progress" aria-label="Time per slide">
+                {slides.map((s, i) => (
+                  <div key={s.index} className={i === slide ? 'current' : ''} onClick={() => goTo(i)} title={`Slide ${i + 1}: ${formatTime(slideSeconds[i])}`}>
+                    <span style={{ width: `${Math.min(100, (slideSeconds[i] / Math.max(config.pitchSeconds / slides.length, 1)) * 100)}%` }} />
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
 
           {phase === 'pitch' && (
             <section className="metrics">
@@ -666,7 +683,7 @@ export function Session({ config, stream, status, onDone, onCancel }: Props) {
           <div className="card">
             <div className="countdown">{countdown}</div>
             <p className="muted">Look at the panel and stand naturally. Begin when the count ends.</p>
-            {slides.length > 0 && <p className="faint">Use the arrow keys to change slides.</p>}
+            {slides.length > 0 && <p className="faint">Use the arrow keys to change slides and F to enlarge them.</p>}
           </div>
         </div>
       )}

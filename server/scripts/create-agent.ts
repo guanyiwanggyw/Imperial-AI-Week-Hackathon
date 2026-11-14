@@ -96,7 +96,7 @@ async function main() {
   };
 
   // The SDK types model the output shape of the prompt; the API accepts this input shape.
-  const body = { name: "Pitch sparring panelist", conversationConfig, platformSettings } as never;
+  const body = { name: "Pitch Perfect panelist", conversationConfig, platformSettings } as never;
 
   if (env.elevenLabsAgentId) {
     await client.conversationalAi.agents.update(env.elevenLabsAgentId, body);
