@@ -38,6 +38,6 @@ if (fs.existsSync(webDist)) {
 }
 
 app.listen(env.port, () => {
-  console.log(`Pitch Sparring Partner server on http://localhost:${env.port}`);
+  console.log(`Pitch Perfect server on http://localhost:${env.port}`);
   console.log("Integrations:", integrationStatus());
 });

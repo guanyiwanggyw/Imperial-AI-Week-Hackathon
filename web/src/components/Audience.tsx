@@ -58,11 +58,13 @@ export function Audience({ personas, assets, backdrop, reactions, onReactionEnd,
               <Avatar avatars={avatars} persona={p} portrait={portrait}>
                 {face}
               </Avatar>
+              <div className="nameplate">
+                <div className="reaction">{showReaction && !focus ? REACTION_LABEL[r.reaction] : ''}</div>
+                <div className="name">
+                  {p.name} <span className="role">· {p.role}</span>
+                </div>
+              </div>
             </div>
-            <div className="name">
-              {p.name} <span style={{ opacity: 0.75 }}>· {p.role}</span>
-            </div>
-            <div className="reaction">{showReaction && !focus ? REACTION_LABEL[r.reaction] : ''}</div>
           </div>
         )
       })}
