@@ -123,7 +123,7 @@ evalRedoRouter.post("/redo", async (req, res) => {
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
         system:
-          "You are a pitch coach. Rewrite a passage the speaker said so it lands better when spoken aloud: keep their meaning, facts and voice (never invent numbers or claims), remove fillers and false starts, lead with the point, and keep sentences short. It will be spoken by a clone of their own voice.",
+          "You are a pitch coach. Rewrite a passage the speaker said so it lands better when spoken aloud: keep their meaning, facts and voice (never invent numbers or claims), remove fillers and false starts, lead with the point, and keep sentences short. It will be spoken by a clone of their own voice, so write only words they would say: never add placeholders, brackets or notes to fill in. If a fact is missing, leave it out.",
         messages: [
           {
             role: "user",
@@ -139,7 +139,9 @@ evalRedoRouter.post("/redo", async (req, res) => {
       { timeout: 60_000 },
     );
     if (response.stop_reason === "refusal" || !response.parsed_output) throw new Error("Could not write the improved version");
-    const rewrite = response.parsed_output;
+    // Never speak a placeholder such as "[insert figure]", even if the model adds one.
+    const unbracket = (t: string) => t.replace(/\s*\[[^\]]*\]\s*/g, " ").replace(/\s{2,}/g, " ").trim();
+    const rewrite = { ...response.parsed_output, improved: unbracket(response.parsed_output.improved), spoken: unbracket(response.parsed_output.spoken) };
 
     let cloned = false;
     if (input.consent) {

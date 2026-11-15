@@ -87,8 +87,6 @@ export function Report({ session, localRecording, onNew }: Props) {
       gestures,
       tonality: windows(end, size, (a, b) => expressiveness(session.audio, a, b, T.minVoicedWindow)),
       pace: windows(end, size, (a, b) => wpmBetween(pitchWords, a, b)),
-      // The verdict uses the whole pitch: 5 s steps are too short to average fairly.
-      paceAll: wpmBetween(pitchWords, 0, end),
       fillers: windows(end, size, (a, b) => fillerTimes.filter((t) => t >= a && t < b).length),
       fillerTimes,
       hesitations: pauses.filter((p) => p.kind === 'hesitation'),
@@ -471,7 +469,6 @@ type Timelines = {
   gestures: { t: number; value: number | null }[]
   tonality: { t: number; value: number | null }[]
   pace: { t: number; value: number | null }[]
-  paceAll: number | null
   fillers: { t: number; value: number | null }[]
   fillerTimes: number[]
   hesitations: { start: number; end: number }[]
@@ -482,6 +479,12 @@ const mean = (pts: { value: number | null }[]) => {
   const v = pts.map((p) => p.value).filter((x): x is number => x !== null)
   return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null
 }
+const median = (pts: { value: number | null }[]) => {
+  const v = pts.map((p) => p.value).filter((x): x is number => x !== null).sort((a, b) => a - b)
+  if (!v.length) return null
+  const m = Math.floor(v.length / 2)
+  return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2
+}
 const NOT_MEASURED: Verdict = { status: 'none', text: 'Not measured' }
 
 /** Every row says what good looks like and ends in a verdict computed from the same values it draws. */
@@ -490,7 +493,8 @@ function deliveryRows(tl: Timelines, duration: number): TimelineRow[] {
   const eye = mean(tl.eye)
   const gestures = mean(tl.gestures)
   const tone = mean(tl.tonality)
-  const pace = tl.paceAll ?? mean(tl.pace)
+  // Median of the 5 s steps: robust to one noisy step, and consistent with the coloured points and chips.
+  const pace = median(tl.pace)
   const perMin = duration > 0 ? tl.fillerTimes.length / (duration / 60) : 0
   const paceMax = Math.max(220, ...tl.pace.map((p) => (p.value ?? 0) + 10))
   const toneWord = (v: number) => (v < 0.35 ? 'monotone' : v < 0.65 ? 'varied' : 'expressive')

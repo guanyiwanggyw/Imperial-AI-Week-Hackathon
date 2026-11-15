@@ -7,6 +7,49 @@
 
 ## Log
 
+### 2026-11-15: README rewritten (requested by me)
+
+**Heads-up, team: `README.md` was rewritten. I kept your sections on the live avatars, interactive panel, voice agent and faces, tightened.**
+
+- **New "Why we built it" section:** we talked to participants and panels, and found no place to practise communication in different situations.
+- **Updated "What it does":** landing, the report summary, "do it better", "try that answer again", past sessions.
+- **Updated architecture**, with the `/api/eval/*` routes.
+- **New evaluation-engine section:** gaze formula, mouth-gated speech, scores 0–100 with weights, the Haiku/Sonnet judge, calibration on 5 strong and 5 weak speakers.
+- **New "Model choices" section:** small models for live inference.
+- **Privacy, keys table, project structure, prize sections and the API list updated** (Audio Isolation, diarization, cloning, v3/Flash, `addContext`, fal lip-sync).
+- **Removed** the outdated `CONTENT_WEIGHT` formula.
+
+### 2026-11-15: demo video v2, and the "do it better" placeholder fix
+
+- **Fix in `server/src/eval/redo.ts`:**
+  - Claude's rewrite could end with a placeholder like "[Insert real no-show figure here.]", because the prompt forbids inventing numbers. The clip then spoke it aloud.
+  - The prompt now says never to add placeholders, brackets or notes ("if a fact is missing, leave it out"), and any bracketed text is also stripped from the rewrite before it is spoken.
+  - Verified on the same session: the new rewrite is clean.
+- **Demo video v2:** `demo-video/pitch-perfect-demo.mp4` (2:08, AAC audio, for QuickTime, Chrome and sharing) and `pitch-perfect-demo-vscode.mp4` (the same video with Opus audio; VS Code's preview can't play AAC, so the first file looks silent there). Both are untracked.
+  - **New AI struggling speaker:** a fictional young founder pitching the same clinic idea badly. The voice is ElevenLabs "Liam" and the body comes from OmniHuman v2.
+    - He went through a real live session: `server/data/sessions/20261115104433-lyhy`, overall 46 (eye contact 4, clarity 8), with 23 feedback events.
+    - "See yourself do it better" and "Try that answer again" were run for real on his session. The retry went 26 → 81 for the answer.
+    - My real session is no longer used in the video.
+  - **Sound:** the voiceover, plus short moments of each speaker's own voice and of the "do it better" clip.
+  - **Known limit:** ElevenLabs flags clones of its own stock voices as `requires_verification`, so the AI speaker's clip uses the stock voice. Cloning a real person's voice works; it did on my own session. For a "your own voice" example in the demo, film a real person.
+
+### 2026-11-15: two-minute demo video (requested by me)
+
+- **`demo-video/pitch-perfect-demo.mp4`:** 1:54, 1080p, with an ElevenLabs voiceover. It's untracked (32 MB); please don't commit it, share it directly.
+- **Scenes:**
+  - The landing page.
+  - Setup.
+  - A live session with the Anam panel: one question and the answer.
+  - The strong speaker's report (89).
+  - The struggling speaker's report (my real session `20261114232502-8rl3`, 42): tracking overlay, timestamped feedback, delivery over time, see yourself do it better, try that answer again.
+  - Past sessions.
+- **The strong speaker is AI-generated**, and the voiceover says so:
+  - A fictional founder: a fal flux image, an ElevenLabs "Jessica" voice and fal OmniHuman v2 for body and gestures (about $7).
+  - She went through a **real session**: in a headless Chrome only, `getUserMedia` returned her video's stream. Everything else is the real app: MediaPipe, Scribe, the Anam panel, recording, the batch transcript and Claude's scoring.
+  - Her session is `server/data/sessions/20261115101751-n8o7`, overall 89. Claude honestly scored her answer 58 because it didn't cover the market-size question.
+  - A first attempt, with broken video seeking, was deleted.
+- **No app code changed for the video.** The recording scripts live outside the repo. The one related fix is the pace-verdict median, logged in the 5-second entry below.
+
 ### 2026-11-15: removed the "Services" card from setup
 
 - **`web/src/components/Setup.tsx`:** removed the "Services" status card (Transcript, Questions and evaluation, Live avatar, Generated media, Synthesia faces chips), as requested by me.
@@ -17,7 +60,7 @@
 
 - **5-second steps:** "Delivery over time" (graph, strips, table) now uses 5s windows instead of 10 or 15 (`Report.tsx`).
   - Tone of voice needed 40 voiced samples per window, about 6s, so a 5s window could never be measured. `pitchSpread` and `expressiveness` (`eval/metrics.ts`) take an optional minimum, and the chart uses `T.minVoicedWindow` = 15 (about 2s of voice). The overall tone score keeps `T.minVoicedSamples`.
-  - The pace verdict now uses the whole pitch (`paceAll`), not the mean of 5s windows, which was noisy (194 vs 228 wpm on the same session).
+  - The pace verdict uses the **median** of the 5s steps. The mean was noisy (194 vs 228 wpm). A whole-pitch rate counted long pauses and contradicted the coloured points ("145 wpm · on target" next to "Speaking too fast" chips).
   - The rolling `scoreSeries` (the scores beside the recording) stays at 10s. Tone can't be judged in 5s.
 - **Penalty when the camera can't see the body or hands** (`eval/scores.ts`, `T.body.visibility`):
   - Before, hidden hands or shoulders only made those parts unmeasured, which could even raise the body score.
