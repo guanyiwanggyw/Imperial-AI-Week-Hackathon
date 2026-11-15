@@ -45,7 +45,21 @@ sessionsRouter.get("/", async (_req, res) => {
     ids.map(async (id) => {
       try {
         const s = JSON.parse(await fs.readFile(path.join(SESSIONS_DIR, id, "session.json"), "utf8"));
-        return { id, startedAt: s.startedAt, title: s.title, overall: s.report?.overall ?? null };
+        const ev = s.evaluation;
+        return {
+          id,
+          startedAt: s.startedAt,
+          title: s.title,
+          overall: s.report?.overall ?? null,
+          // Summary fields for the Past sessions page (older reports are 0–10 and have no scale).
+          scale: s.report?.scale ?? 10,
+          notScored: Boolean(s.report?.insufficientSpeech),
+          panel: s.config?.panel?.name ?? null,
+          format: s.config?.format ?? "timed",
+          duration: s.duration ?? null,
+          questions: Array.isArray(s.qna) ? s.qna.length : 0,
+          scores: ev ? { ...ev.finalScores, timing: ev.timingScore ?? null, unmeasured: ev.unmeasured ?? [] } : null,
+        };
       } catch {
         return null;
       }

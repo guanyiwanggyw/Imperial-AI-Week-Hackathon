@@ -7,6 +7,94 @@
 
 ## Log
 
+### 2026-11-15: landing page (first version, requested by me)
+
+**Heads-up, team: the site now opens on a landing page. Setup moved to `#/practice`; report and other routes are unchanged.**
+
+- **New `web/src/components/Landing.tsx`:**
+  - The hero image (`web/public/landing/hero.jpg`, a 2400px, 346 KB copy of the Topaz-upscaled `image.jpeg`) is fixed behind a grey overlay that darkens towards the headline.
+  - On top: transparent nav (How it works, Past sessions, Start practising), "AI pitch practice" kicker, "Pitch Perfect", mission line, primary and ghost buttons, privacy note, and a bobbing "Learn more" cue.
+  - Scrolling brings up a sheet (white in light mode, the theme surface in dark) with rounded top corners that slides over the fixed image. It contains: Why we built it; How it works (3 steps); What you get (6 features with a cyan → violet → magenta top accent); Who it's for; About us + Built with; a gradient final call to action; footer.
+- **`App.tsx`:**
+  - New `landing` view, shown when the site opens with no hash.
+  - "Start practising" goes to `#/practice` (setup). A new `#/practice` route keeps setup on refresh.
+  - "Past sessions" goes to `#/sessions`.
+- **`index.css`:** `.ld-*` styles. The vivid accents are only on the landing page, not on the scoring pages. Responsive at 900px; reduced motion stops the bobbing arrow and button lift.
+- **Verified in headless Chrome:**
+  - The background is `position: fixed` and the image loads.
+  - Hero, mid-scroll (sheet over image) and footer screenshots, in light and dark.
+  - "Start practising" opens setup. No errors.
+- **Follow-up:**
+  - The logo is now a button. In `TopNav` (`Chrome.tsx`) it goes to `#/`, the landing page; it's disabled in the live session (`wide`) so it can't end a session. On the landing page it scrolls to the top.
+  - `App.tsx` routes `#/` and the empty hash to the landing page, so Back from `#/practice` returns there.
+  - "Ready when you are" uses a pastel gradient (soft indigo, lavender, pink, aqua) drifting horizontally over 14s (alternating), with dark indigo text and button. It's off under reduced motion.
+  - Verified: the logo from setup, past sessions and a report lands on the landing page; Back works; the gradient position moves. No errors.
+- **Landing revision:**
+  - "Built with" chips moved to one small line in the footer.
+  - "A live AI panel" and "See yourself do it better" are now their own spotlight sections. Each has text, ticks and a product mock: the panel tiles with a speaking glow and a caption, and the before/after with fillers struck through. They sit on alternating sides.
+  - The generic feature cards (gradient top bars) are replaced by "What we measure": eye contact, body language, voice and clarity, each with an example score, a feedback-coloured bar, how it's measured, and a real-format note ("0:42 · Looked away for 3.4s"). Labelled as examples.
+  - The steps lift and zoom on hover or focus (scale 1.04, raised 8px, indigo border, shadow) while the others fade to 70%.
+  - "Ready when you are" spans the full width of the sheet.
+  - The mock classes are `ld-tile` and `ld-face`, because `.tile .face` belongs to the live session screen.
+  - Verified in headless Chrome: hover transform, final CTA 1440/1440px wide, section screenshots. No errors.
+  - The panel mock (`PanelMock` in `Landing.tsx`) rotates the speaking panelist every 3s. Each asks a persona-typical question that types out in about 1s with a caret.
+  - Tiles are buttons: a click jumps to that panelist and holds for 6s, and hover pauses the rotation. The speaking tile lifts with a glow and a small equaliser. Animations are off under reduced motion.
+  - Verified: Priya → Marcus → Elena → Priya at about 3s each; the click hold; hover pauses and leaving resumes. No errors.
+
+### 2026-11-15: Past sessions page (brief §3 "History: past sessions, a scores-over-attempts chart, open any session")
+
+**Heads-up, Derek / Person 3 (UI) and Guanyi (`sessions.ts`, `Setup.tsx`): new page, small edits listed below.**
+
+- **New page `web/src/components/History.tsx` at `/#/sessions`:**
+  - Score chips (Overall, Eye contact, Body language, Voice, Clarity, Timing) and a panel filter.
+  - Stat tiles: Latest with change vs previous, Best, Average, Sessions with the not-scored count.
+  - A single-series progress chart: 2px indigo line, 8px dots ringed in the surface colour, recessive 0–100 grid, hover crosshair and tooltip. Click a dot to open its report. The axis shows times when every session is from one day.
+  - A session table: date, title, panel, format, length, questions, overall with verdict, the five category scores, and "Open report".
+  - Empty and error states. Responsive at 960px and 600px.
+  - Older 0–10 reports are scaled to 0–100.
+- **Nav (`Chrome.tsx`):** `TopNav` gets `active: 'past'`. "Past sessions" in Setup and Report now opens this page (Setup used to scroll to its short list).
+- **`App.tsx`:** new `history` view and `#/sessions` hash route.
+- **`server/src/sessions.ts`:** `GET /api/sessions` also returns `scale`, `notScored`, `panel`, `format`, `duration`, `questions` and `scores` (final scores, timing and unmeasured from the evaluation). Existing fields are unchanged.
+- **Verified:**
+  - The chart colour passes the dataviz palette validator in both themes.
+  - Headless Chrome: the nav tab opens the page, 20 sessions are listed and 13 plotted, the stats are correct, hover shows the tooltip, switching the metric redraws, and "Open report" opens the right report.
+  - Light and dark screenshots checked. No errors.
+- **Follow-up:**
+  - The trend line draws from the left (`pathLength` + dash-offset animation, about 0.15s per session, 0.8–2.4s in total). Each dot pops in as the line reaches it. It replays on metric or panel change and is off under reduced motion.
+  - The selected pill has an indigo border, a 14% indigo fill (`color-mix`) and indigo text.
+  - The category columns are a five-column grid in both the header and the rows. They had been one text string, so they didn't line up with the header. Verified header and value centres match to 0px.
+  - The trend animates only the first time each metric + panel view is opened on a visit. Revisited views show the finished chart instantly (`.hs-chart.static`). The chart marks its view as seen only once it has appeared, and it decides at mount, so hover can't cut the animation. Verified: first Overall, Eye and Body animate; returning to Overall and Eye is static.
+
+### 2026-11-14: report top restructured as an executive summary (requested by me)
+
+**Heads-up, Derek / Person 3: this replaces section 1 of your `Report.tsx`. The rest of the page is unchanged. The new pieces are in my `web/src/eval/playback/ScoreOverview.tsx`, and styles are in `index.css` under `.rp-exec`, `.rp-hero`, `.rp-kpis` and `.rp-details`.**
+
+- **Score hero:** the overall score (64px, /100) with a verdict chip (Excellent 85+, Strong 70+, Developing 50+, otherwise Needs work) and the one-line summary beside it (Claude's summary, else the evaluation's coaching summary).
+- **KPI tiles:** Eye contact, Body language, Voice, Clarity, Timing. Each has a large number, a thin bar in its feedback colour, and a status (On track 70+, Improve 50+, Focus here). Unmeasured categories show a dash and "Not measured". These replace the small "Eye 98 · Body 77 …" caption.
+- **"Detailed scores":** a disclosure with the existing Content and Delivery bars, collapsed by default (open for old sessions without an evaluation).
+- **Not-scored sessions:** a muted dash and a "Not scored" chip. The explanation appears once, in the summary.
+- **Responsive:** tiles go 5 → 3 → 2 columns, and the hero stacks under 900px.
+- **Verified:** headless Chrome screenshots in light and dark, on a scored session and on a not-scored session. No errors, and braces balance.
+- **Follow-up:**
+  - "Detailed scores" now starts expanded (state in `Report.tsx`, so the user's toggle survives re-renders during playback).
+  - Bars fill up when the report opens: a CSS `rp-grow` scaleX animation, tiles staggered 80ms apart, then the detailed bars row by row. It's off under `prefers-reduced-motion`.
+  - Verified in headless Chrome: scaleX goes 0 → 1, details open on load, and closing it survives re-renders.
+
+### 2026-11-14: colour scheme: indigo brand, cool neutrals, feedback colours reserved (requested by me)
+
+**Heads-up, Derek / Person 3: this changes your design tokens in `index.css`. Layout is untouched. Revert or tune as you like.**
+
+- **Why:** the coral brand colour doubled as the "problem" red, so coral buttons and question markers read like warnings. The brand is now **indigo**, and green, amber and red only ever mean good, warning and problem.
+- **Tokens (`index.css` `:root` and the dark / `.session` block):**
+  - New `--brand`, `--brand-strong`, `--brand-hover` and `--brand-soft` (light `#5b4fe5`, dark `#8b7dff`).
+  - `--rp-blue`, `--accent` and `--primary` now point at the brand, so primary buttons are indigo.
+  - `--coral` is now the problem red (`#d9483e` / `#e5534b`). `--mint` is good. `--amber` is warning.
+  - Neutrals move from warm pink-grey to cool grey: light background `#f6f6f9`, dark `#131218`, surfaces `#1c1a22` and `#25232c`.
+- **Brand roles switched from coral to `--brand`:** focus rings, selected-panel dot, question card and question events, logo peak, active tab underline, score header bars, panel caption names. The speaking-tile highlight is indigo instead of green, because speaking isn't "good".
+- **Hard-coded warm greys** in the overall card, player controls, seats and badges were swapped for cool equivalents.
+- **Assets:** the favicon bar is indigo; the recording dot stays red (the new red).
+- **Verified:** braces balance. Headless Chrome screenshots of the report and setup in light and dark, with no errors.
+
 ### 2026-11-14: stricter Pauses, Eye contact and Gestures
 
 - **Report order (`Report.tsx`):** "Delivery over time" now sits above "See yourself do it better".

@@ -2,7 +2,7 @@
 import { useTheme } from '../lib/theme'
 
 interface NavProps {
-  active: 'practice' | 'feedback'
+  active: 'practice' | 'past' | 'feedback'
   /** Tabs without a handler are shown but inert (e.g. during a live session). */
   onPractice?: () => void
   onPast?: () => void
@@ -15,7 +15,14 @@ export function TopNav({ active, onPractice, onPast, onFeedback, wide }: NavProp
   return (
     <header className={`rp-nav${wide ? ' wide' : ''}`}>
       <div className="rp-wrap">
-        <span className="rp-brand">
+        {/* The logo goes back to the landing page (not during a live session, where it would end the session). */}
+        <button
+          type="button"
+          className="rp-brand"
+          onClick={wide ? undefined : () => (location.hash = '#/')}
+          disabled={wide}
+          aria-label={wide ? undefined : 'Pitch Perfect home'}
+        >
           <svg className="rp-logo" viewBox="0 0 28 28" aria-hidden>
             <rect width="28" height="28" rx="7" className="bg" />
             <rect x="7" y="15" width="3" height="6" rx="1.5" className="bar" />
@@ -23,13 +30,13 @@ export function TopNav({ active, onPractice, onPast, onFeedback, wide }: NavProp
             <rect x="18" y="7" width="3" height="14" rx="1.5" className="peak" />
           </svg>
           Pitch Perfect
-        </span>
+        </button>
         <div className="rp-nav-right">
         <nav className="rp-tabs" aria-label="Main">
           <button className={active === 'practice' ? 'on' : ''} aria-current={active === 'practice' ? 'page' : undefined} onClick={onPractice} disabled={active !== 'practice' && !onPractice}>
             Practice
           </button>
-          <button onClick={onPast} disabled={!onPast}>
+          <button className={active === 'past' ? 'on' : ''} aria-current={active === 'past' ? 'page' : undefined} onClick={onPast} disabled={active !== 'past' && !onPast}>
             Past sessions
           </button>
           <button className={active === 'feedback' ? 'on' : ''} aria-current={active === 'feedback' ? 'page' : undefined} onClick={onFeedback} disabled={active !== 'feedback' && !onFeedback}>

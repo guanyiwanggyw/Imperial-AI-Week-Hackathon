@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react'
 import { getJson, getStatus, type Status } from './api'
+import { History } from './components/History'
+import { Landing } from './components/Landing'
 import { Report } from './components/Report'
 import { Session } from './components/Session'
 import { Setup } from './components/Setup'
@@ -13,13 +15,16 @@ type View =
   | { name: 'report'; session: SessionData; localRecording: string | null }
   | { name: 'loading' }
   | { name: 'missing' }
+  | { name: 'history' }
+  | { name: 'landing' }
   | { name: 'eval-debug' }
 
 const reportHash = (id: string) => `#/report/${id}`
 
 export default function App() {
   const [status, setStatus] = useState<Status | null>(null)
-  const [view, setView] = useState<View>({ name: 'setup' })
+  // Landing page when the site opens with no route; #/practice is the setup screen.
+  const [view, setView] = useState<View>(() => (location.hash ? { name: 'setup' } : { name: 'landing' }))
   const [stream, setStream] = useState<MediaStream | null>(null)
   const [streamError, setStreamError] = useState<string | null>(null)
 
@@ -34,6 +39,11 @@ export default function App() {
     const open = () => {
       // Tracking debug page (evaluation workstream): webcam with MediaPipe landmarks and live readings.
       if (location.hash === '#/eval-debug') return setView({ name: 'eval-debug' })
+      // Past sessions page: progress over attempts and every saved session.
+      if (location.hash === '#/sessions') return setView({ name: 'history' })
+      if (location.hash === '#/practice') return setView({ name: 'setup' })
+      // The logo links to #/ (and Back from #/practice lands on an empty hash): the landing page.
+      if (location.hash === '#/' || location.hash === '') return setView({ name: 'landing' })
       const match = location.hash.match(/^#\/report\/([\w-]+)/)
       if (!match) return
       setView({ name: 'loading' })
@@ -86,6 +96,22 @@ export default function App() {
         onDone={(session, localRecording) => {
           history.replaceState(null, '', reportHash(session.id))
           setView({ name: 'report', session, localRecording })
+        }}
+      />
+    )
+  }
+
+  if (view.name === 'landing') {
+    return <Landing onStart={() => (location.hash = '#/practice')} onPast={() => (location.hash = '#/sessions')} />
+  }
+
+  if (view.name === 'history') {
+    return (
+      <History
+        onOpen={(id) => (location.hash = reportHash(id))}
+        onNew={() => {
+          history.replaceState(null, '', location.pathname)
+          setView({ name: 'setup' })
         }}
       />
     )

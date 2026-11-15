@@ -3,6 +3,7 @@ import type { Layers } from '../eval/debug/draw'
 import { expressiveness, eyeContactShare, fillerIndices, findPauses, formatTime, wpmBetween, windows } from '../eval/metrics'
 import { DoItBetter } from '../eval/playback/DoItBetter'
 import { eventItems, LiveNotes, ScoresAt } from '../eval/playback/FeedbackPanels'
+import { KpiTiles, ScoreHero } from '../eval/playback/ScoreOverview'
 import { LandmarkPlayback } from '../eval/playback/LandmarkPlayback'
 import type { DimensionScore, SessionData } from '../types'
 import { Steps, TopNav } from './Chrome'
@@ -39,6 +40,8 @@ export function Report({ session, localRecording, onNew }: Props) {
   const report = session.report
   const video = useRef<HTMLVideoElement>(null)
   const [playhead, setPlayhead] = useState(0)
+  // "Detailed scores" starts expanded; the user's toggle is kept across re-renders.
+  const [detailsOpen, setDetailsOpen] = useState(true)
   const eventsBox = useRef<HTMLDivElement>(null)
   const userScrolledAt = useRef(0)
   const [playing, setPlaying] = useState(false)
@@ -129,21 +132,9 @@ export function Report({ session, localRecording, onNew }: Props) {
     if (top < box.scrollTop || top + el.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTo({ top, behavior: 'smooth' })
   }, [currentEvent])
 
-  const dash = '—'
-  const subScores = ev
-    ? (['eye', 'body', 'tone', 'coherency'] as const)
-        .map((c) => `${c[0].toUpperCase()}${c.slice(1)} ${ev.unmeasured.includes(c) ? dash : ev.finalScores[c]}`)
-        .concat(`Timing ${ev.timingScore ?? dash}`)
-        .join(' · ')
-    : report.contentScore !== null && report.deliveryScore !== null
-      ? `Content ${Math.round(report.contentWeight * 100)}%, delivery ${Math.round((1 - report.contentWeight) * 100)}%`
-      : report.contentScore === null
-        ? 'Delivery only'
-        : 'Content only'
-
   return (
     <div className="rp">
-      <TopNav active="feedback" onPractice={onNew} onPast={onNew} />
+      <TopNav active="feedback" onPractice={onNew} onPast={() => (location.hash = '#/sessions')} />
 
       <div className="rp-wrap">
         <Steps current={2} />
@@ -161,24 +152,22 @@ export function Report({ session, localRecording, onNew }: Props) {
           </button>
         </div>
 
-        {/* 1. Overall with component scores */}
-        <section className="rp-card rp-score">
-          <div className="rp-overall">
-            <span className="rp-eyebrow">Overall score</span>
-            <span className="big">{report.insufficientSpeech ? dash : fmtScore(report.overall, k)}</span>
-            <span className="out">out of 100</span>
-            {report.insufficientSpeech && <span className="rp-pill warn">Not scored</span>}
-            <span className="sub">{subScores}</span>
-          </div>
-          <div className="rp-score-body">
-            {report.insufficientSpeech && (
-              <div className="rp-notice">
-                <strong>A little more speaking time is needed</strong>
-                <span>
-                  {ev?.coaching.summary ?? 'Not enough speech was captured to score this session. Check that the transcript service is configured and speak for at least 20 seconds.'}
-                </span>
-              </div>
-            )}
+        {/* 1. Executive summary: overall score, verdict, summary, one tile per category; details on demand */}
+        <section className="rp-card rp-exec">
+          <ScoreHero report={report} ev={ev} k={k} />
+          {report.insufficientSpeech ? (
+            // The hero summary already explains why when there is an evaluation.
+            !ev && <div className="rp-notice">
+              <strong>A little more speaking time is needed</strong>
+              <span>
+                Not enough speech was captured to score this session. Check that the transcript service is configured and speak for at least 20 seconds.
+              </span>
+            </div>
+          ) : (
+            ev && <KpiTiles ev={ev} />
+          )}
+          <details className="rp-details" open={detailsOpen} onToggle={(e) => setDetailsOpen(e.currentTarget.open)}>
+            <summary>Detailed scores</summary>
             <div className="rp-components">
               <div className="rp-bars">
                 <ScoreBar head label="Content" score={report.contentScore} k={k} />
@@ -186,11 +175,7 @@ export function Report({ session, localRecording, onNew }: Props) {
                   (Object.keys(DIMENSION_LABELS) as (keyof typeof DIMENSION_LABELS)[]).map((d) => (
                     <ScoreBar key={d} label={DIMENSION_LABELS[d]} score={report.content!.dimensions[d].score} k={k} />
                   ))}
-                {report.content ? (
-                  <p className="rp-summary">{report.content.summary}</p>
-                ) : report.insufficientSpeech ? (
-                  <p className="rp-summary">Scores appear when enough speech is captured for a reliable evaluation.</p>
-                ) : (
+                {!report.content && !report.insufficientSpeech && (
                   <p className="rp-summary">Content evaluation unavailable{report.contentError ? `: ${report.contentError}` : ''}. The score uses delivery only.</p>
                 )}
               </div>
@@ -201,7 +186,7 @@ export function Report({ session, localRecording, onNew }: Props) {
                 ))}
               </div>
             </div>
-          </div>
+          </details>
         </section>
 
         {/* 2 and 3. Best moment and priorities */}

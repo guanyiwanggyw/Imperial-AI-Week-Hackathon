@@ -237,7 +237,7 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
     <div className="app">
       <TopNav
         active="practice"
-        onPast={history.length ? () => document.getElementById('past-sessions')?.scrollIntoView({ behavior: 'smooth', block: 'center' }) : undefined}
+        onPast={() => (location.hash = '#/sessions')}
         onFeedback={history.length ? () => onOpenSession(history[0].id) : undefined}
       />
       <div className="rp-wrap">
