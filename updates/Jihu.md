@@ -7,6 +7,41 @@
 
 ## Log
 
+### 2026-11-15: "Try that answer again" (practice loop on the report)
+
+On the report you pick a weak answer (or your weakest pitch passage), the panelist asks the question again out loud, you answer on camera, and the report shows the original and the retry side by side, measured the same way.
+
+- **New `web/src/eval/retry/retry.ts`:**
+  - `retryTargets()` picks up to 3 Q&A answers, weakest first (no answer, then the lowest Claude `qna_feedback` score), plus the weakest pitch passage (the same `pickPassage` as "do it better").
+  - `measure()` scores any time window with the report's own functions (`eyeScore`, `bodyScore`, `toneScore`, `coherencyProxy`, `wpmIn`, fillers), so before and after are like for like.
+  - `attemptOverall()` uses the report's overall weights without timing.
+  - `compareRows()` and `improvement()` drive the table. Pace counts as better when it moves towards 130–160 wpm; fillers are compared per minute.
+- **New `web/src/eval/retry/capture.ts`:**
+  - `RetryCapture` uses the same VisionTracker, AudioMeter, SignalSampler and LiveTranscript as a session, with a 3s calibration during the countdown and a local recording of the attempt.
+  - `askAloud()` speaks the question in the panelist's ElevenLabs voice, falling back to the browser's voice.
+- **New `web/src/eval/playback/TryAgain.tsx`:**
+  - The report card has target pills, the question, your original answer and what to fix.
+  - The result shows overall before → after with the change, a before/after/change table (clarity, eye contact, body language, voice, pace, filler words, length), "what got better", "next time", a replay of the attempt and both transcripts.
+  - The recording overlay runs: camera → 3, 2, 1 → the panelist asks (with a **Skip to my answer** button) → your turn → stops on its own after a 5s pause once 8 or more words are said (or at 90s, or on **Done**) → scoring.
+  - Clear errors for camera or mic blocked, the transcriber failing, and fewer than 6 words heard.
+- **New `server/src/eval/retry.ts`**, mounted in `server/src/eval/routes.ts`:
+  - `POST /api/eval/retry/say`: ElevenLabs `eleven_flash_v2_5` text to speech for the question.
+  - `POST /api/eval/retry`: Claude (`EVAL_FINAL_MODEL`, default Sonnet 5.5) scores both attempts **blind**. The original and the retry are randomly labelled A and B, so the model can't favour the newer one. It uses an anchored 20/60/100 rubric (answers the question, leads with the point, specific, concise, clean wording). The attempt is saved to `server/data/sessions/<id>/retries.json`.
+  - `GET /api/eval/retry/:id` lists saved attempts.
+  - Without an Anthropic key, the attempt is still saved and the filler-and-pause measure stands in for clarity.
+- **`liveTranscript.ts`:** new `ready` flag, set when the mic audio starts streaming. The overlay says "Your turn" only after it's set.
+- **Shared files (small edits):**
+  - `web/src/components/Report.tsx`: renders `<TryAgain>` after "See yourself do it better", and adds a "Try your weakest answer again" button under "What to work on" that scrolls to it.
+  - `web/src/index.css`: `.ta-*` styles. Light and dark come from the existing tokens. Single column under 720px; animations are off under reduced motion. Only the live self-view is mirrored; the replay is not (mirroring the element flipped its controls).
+- **Privacy:** the retry video stays in the browser tab. Only the transcript and the measured numbers are sent (to Claude for the judgement, and saved with the session).
+- **Verified:**
+  - Web, server and eval CLI typecheck; `vite build` passes.
+  - Real `/retry/say` returns audio/mpeg.
+  - A real Claude judgement on a sample pair (4.3s): vague answer 14, specific answer 93, blind order mapped back correctly. The test data was deleted.
+  - Headless Chrome on a real session with a mocked attempt: card, table and colours are right, with no overflow at 390px.
+  - With a fake camera and mic, the overlay goes countdown → asking → skip → your turn → Done → "We only heard 0 words". No errors.
+  - Not yet tested: a real spoken retry with a real face (needs a person in front of the camera).
+
 ### 2026-11-15: landing page (first version, requested by me)
 
 **Heads-up, team: the site now opens on a landing page. Setup moved to `#/practice`; report and other routes are unchanged.**

@@ -12,6 +12,8 @@ export class LiveTranscript {
   phrases: Phrase[] = []
   partial = ''
   error: string | null = null
+  /** True once the mic audio is streaming to the transcriber (words spoken before this are not heard). */
+  ready = false
   private conn: RealtimeConnection | null = null
   private audioStartedAt = 0
   private lastCommitAt = 0
@@ -40,6 +42,8 @@ export class LiveTranscript {
     this.audioStartedAt = now()
     conn.on(RealtimeEvents.AUDIO_STARTED, () => {
       this.audioStartedAt = now()
+      this.ready = true
+      this.onUpdate()
     })
     conn.on(RealtimeEvents.PARTIAL_TRANSCRIPT, (data) => {
       this.partial = data.text

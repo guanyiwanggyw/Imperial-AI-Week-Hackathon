@@ -5,6 +5,7 @@ import { DoItBetter } from '../eval/playback/DoItBetter'
 import { eventItems, LiveNotes, ScoresAt } from '../eval/playback/FeedbackPanels'
 import { KpiTiles, ScoreHero } from '../eval/playback/ScoreOverview'
 import { LandmarkPlayback } from '../eval/playback/LandmarkPlayback'
+import { TryAgain } from '../eval/playback/TryAgain'
 import type { DimensionScore, SessionData } from '../types'
 import { Steps, TopNav } from './Chrome'
 import { DeliveryTimeline, type TimelineRow, type Verdict } from './DeliveryTimeline'
@@ -228,6 +229,11 @@ export function Report({ session, localRecording, onNew }: Props) {
             ) : (
               <p className="rp-muted">Nothing stood out. Keep practising with a stricter panel.</p>
             )}
+            {ev && !report.insufficientSpeech && (session.qna.length > 0 || ev.transcript.length > 0) && (
+              <button className="rp-btn ta-jump" onClick={() => document.getElementById('try-again')?.scrollIntoView({ behavior: 'smooth', block: 'start' })}>
+                Try your weakest answer again
+              </button>
+            )}
           </section>
         </div>
 
@@ -375,6 +381,9 @@ export function Report({ session, localRecording, onNew }: Props) {
 
         {/* "See yourself do it better" (evaluation workstream: Claude + ElevenLabs voice clone + fal lip sync) */}
         <DoItBetter session={session} report={report} src={recording} seek={(t) => seek(t)} />
+
+        {/* "Try that answer again" (evaluation workstream): re-answer a weak moment and compare before and after */}
+        <TryAgain session={session} report={report} k={k} />
 
         {/* 5. Content feedback and Q&A */}
         {report.content && (
