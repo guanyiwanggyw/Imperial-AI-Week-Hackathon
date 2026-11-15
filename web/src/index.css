@@ -234,7 +234,6 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .audience.n2 { grid-template-columns: 1fr 1fr; }
 .audience.n3 { grid-template-columns: 1fr 1fr 1fr; }
 .audience.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: minmax(0, 1fr) minmax(0, 1fr); }
-.audience.focus { grid-template-columns: 1fr; grid-template-rows: minmax(0, 1fr); }
 .seat { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
 .seat .tile {
   position: relative; flex: 1; min-height: 0; border-radius: 10px; overflow: hidden; background: var(--surface-2);
@@ -254,7 +253,9 @@ label.field { display: flex; flex-direction: column; gap: 6px; font-size: 13px; 
 .seat.speaking .name { box-shadow: inset 3px 0 0 var(--mint); }
 .seat .reaction:empty { display: none; }
 .seat .reaction { padding: 2px 8px; border-radius: 6px; background: rgba(13, 12, 17, 0.72); color: var(--blush); font-size: 11px; font-weight: 600; }
-.audience.focus .seat:not(.active) { display: none; }
+/* Q&A: seats stay where they were during the pitch; the asker is marked, the others dim slightly */
+.seat.active .tile { box-shadow: 0 0 0 3px var(--mint), 0 0 24px rgba(120, 220, 180, 0.35); }
+.audience.focus .seat:not(.active) .tile { opacity: 0.6; transition: opacity 0.3s; }
 .intro-player { display: flex; flex-direction: column; gap: 8px; max-width: 320px; margin-bottom: 16px; }
 .intro-player video { width: 100%; aspect-ratio: 1; border-radius: 12px; background: #000; object-fit: cover; }
 
@@ -568,6 +569,10 @@ button:focus-visible, [role='slider']:focus-visible { outline: 2px solid var(--b
 .rp-redo .rp-consent { display: flex; gap: 10px; align-items: flex-start; font-size: 13px; color: var(--rp-text-2); line-height: 1.45; }
 .rp-redo .rp-consent input { margin-top: 3px; }
 .rp-redo .rp-redo-video { width: 100%; border-radius: 12px; background: #000; aspect-ratio: 16 / 9; object-fit: contain; }
+.rp-redo-progress { display: flex; flex-direction: column; justify-content: center; gap: 10px; min-height: 200px; padding: 16px; border: 1px dashed var(--rp-border); border-radius: 12px; }
+.rp-redo-progress .bar { height: 10px; border-radius: 999px; background: var(--rp-surface-2); overflow: hidden; }
+.rp-redo-progress .fill { height: 100%; border-radius: inherit; background: var(--brand); transition: width 0.2s linear; }
+.rp-redo-progress .meta { display: flex; justify-content: space-between; gap: 12px; font-size: 13px; color: var(--rp-text-2); font-variant-numeric: tabular-nums; }
 .rp-redo .empty { display: grid; place-items: center; min-height: 200px; border: 1px dashed var(--rp-border); border-radius: 12px; text-align: center; padding: 16px; }
 @media (max-width: 720px) { .rp-redo .rp-redo-grid { grid-template-columns: 1fr; } }
 /* Try that answer again (evaluation workstream) */

@@ -112,6 +112,35 @@ async function runRedo(body: unknown, onStep: (s: string) => void): Promise<Redo
   throw new Error('The request ended without a result')
 }
 
+/**
+ * Estimated progress. The server reports named stages but the lip-sync model gives no percentage, so each
+ * stage owns a slice of the bar and eases towards its end over its typical duration (never reaching it).
+ */
+const STAGES: { match: RegExp; from: number; to: number; seconds: number }[] = [
+  { match: /frame/i, from: 0, to: 6, seconds: 2 },
+  { match: /writing/i, from: 6, to: 22, seconds: 8 },
+  { match: /cloning/i, from: 22, to: 36, seconds: 8 },
+  { match: /speaking/i, from: 36, to: 46, seconds: 5 },
+  { match: /lip-sync/i, from: 46, to: 98, seconds: 60 },
+]
+
+function useEstimatedProgress(step: string | null): number {
+  const [now, setNow] = useState(() => Date.now())
+  const [since, setSince] = useState(() => Date.now())
+  useEffect(() => {
+    setSince(Date.now())
+    setNow(Date.now())
+    if (!step) return
+    const t = window.setInterval(() => setNow(Date.now()), 200)
+    return () => window.clearInterval(t)
+  }, [step])
+  const stage = step ? STAGES.find((s) => s.match.test(step)) : undefined
+  if (!stage) return 0
+  const elapsed = Math.max(0, (now - since) / 1000)
+  // ~86% of the slice after the typical duration, then a slow creep
+  return stage.from + (stage.to - stage.from) * (1 - Math.exp((-2 * elapsed) / stage.seconds))
+}
+
 interface Props {
   session: SessionData
   report: Report
@@ -126,6 +155,7 @@ export function DoItBetter({ session, report, src, seek }: Props) {
   const [step, setStep] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [results, setResults] = useState<RedoResult[]>([])
+  const progress = useEstimatedProgress(step)
 
   useEffect(() => {
     getJson<RedoResult[]>(`/api/eval/redo/${session.id}`, 8000).then(setResults, () => undefined)
@@ -185,16 +215,20 @@ export function DoItBetter({ session, report, src, seek }: Props) {
           <button className="rp-btn" onClick={() => void start()} disabled={Boolean(step)}>
             {step ? 'Working…' : latest ? 'Make another version' : 'Show me'}
           </button>
-          {step && (
-            <p className="rp-muted" aria-live="polite">
-              <span className="spinner" style={{ display: 'inline-block', width: 12, height: 12, marginRight: 8 }} />
-              {step}
-            </p>
-          )}
           {error && <p className="rp-muted">Could not make it: {error}</p>}
         </div>
         <div className="stack">
-          {latest ? (
+          {step ? (
+            <div className="rp-redo-progress" aria-live="polite">
+              <div className="bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(progress)} aria-label="Making the improved clip">
+                <div className="fill" style={{ width: `${progress}%` }} />
+              </div>
+              <div className="meta">
+                <span>{step}</span>
+                <span>{Math.round(progress)}%</span>
+              </div>
+            </div>
+          ) : latest ? (
             <>
               {latest.videoUrl ? (
                 <video src={latest.videoUrl} controls playsInline className="rp-redo-video" />
