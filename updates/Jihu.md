@@ -7,6 +7,12 @@
 
 ## Log
 
+### 2026-11-15: removed the "Services" card from setup
+
+- **`web/src/components/Setup.tsx`:** removed the "Services" status card (Transcript, Questions and evaluation, Live avatar, Generated media, Synthesia faces chips), as requested by me.
+  - The one useful message from it moved under the start button: the missing-ElevenLabs warning ("Without a transcript, pace and fillers cannot be measured…"), shown only when the key is missing.
+  - `status` is still used elsewhere in setup. Nothing else changed.
+
 ### 2026-11-15: 5-second steps, a penalty for hidden body or hands, graph as default
 
 - **5-second steps:** "Delivery over time" (graph, strips, table) now uses 5s windows instead of 10 or 15 (`Report.tsx`).

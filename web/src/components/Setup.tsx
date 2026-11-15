@@ -501,18 +501,7 @@ export function Setup({ status, stream, streamError, onRequestMedia, onStart, on
                 Start practice session
               </button>
               <p className="hint center">{stream ? 'Your camera and microphone are ready' : 'Allow camera and microphone to start'}</p>
-            </section>
-
-            <section className="card stack">
-              <h3>Services</h3>
-              <div className="row small" style={{ flexWrap: 'wrap', gap: 8 }}>
-                <span className="chip"><i className={`dot ${status.elevenlabs ? 'on' : ''}`} /> Transcript</span>
-                <span className="chip"><i className={`dot ${status.anthropic ? 'on' : ''}`} /> Questions and evaluation</span>
-                <span className="chip"><i className={`dot ${status.anam ? 'on' : status.elevenlabsAgent ? 'on' : ''}`} /> {status.anam ? 'Live avatar' : 'Voice panel'}</span>
-                <span className="chip"><i className={`dot ${status.fal ? 'on' : ''}`} /> Generated media</span>
-                <span className="chip"><i className={`dot ${status.synthesia ? 'on' : ''}`} /> Synthesia faces</span>
-              </div>
-              {!status.elevenlabs && <p className="faint">Without a transcript, pace and fillers cannot be measured. Add an ElevenLabs key to the .env file.</p>}
+              {!status.elevenlabs && <p className="hint center">Without a transcript, pace and fillers cannot be measured. Add an ElevenLabs key to the .env file.</p>}
             </section>
 
             {history.length > 0 && (
