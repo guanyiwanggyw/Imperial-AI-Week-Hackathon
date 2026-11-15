@@ -45,12 +45,28 @@ export const T = {
     handSpeedBusy: 1.2,
     /** Fingertip inside the face box, expanded by this fraction of its size. */
     faceTouchMargin: 0.1,
+    /**
+     * Points off the body score when the camera can't see the upper body or the hands. Each share ramps from no
+     * penalty at the first value to the full penalty at the second; a single stretch of `longRunSec` or more adds
+     * `longRunPenalty`. Total capped at `maxPenalty`.
+     */
+    visibility: {
+      handsOutShare: [0.4, 0.9] as [number, number],
+      handsOutMax: 20,
+      bodyOutShare: [0.3, 0.8] as [number, number],
+      bodyOutMax: 15,
+      longRunSec: 15,
+      longRunPenalty: 5,
+      maxPenalty: 30,
+    },
   },
 
   /** Below this much of the speaker's own speech (seconds) nothing is scored. */
   minSpeechSec: 10,
   /** Pitch variety needs at least this many voiced samples of the speaker (~6 s at 7 Hz). */
   minVoicedSamples: 40,
+  /** The same for one 5 s step of the delivery chart (~2 s of voice). */
+  minVoicedWindow: 15,
   /** Pace, fillers and pauses need at least this many of the speaker's own words. */
   minWords: 25,
 
@@ -111,6 +127,10 @@ export const T = {
     tiltSec: 8,
     turnedAwaySec: 5,
     handsHiddenSec: 8,
+    /** Face in view but no hands (in frame or in the pose) for this long. */
+    noHandsSec: 15,
+    /** Face in view but no shoulders for this long. */
+    noBodySec: 10,
     fidgetSec: 4,
     stillHandsSec: 30,
     fillersIn10s: 3,

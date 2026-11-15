@@ -7,6 +7,59 @@
 
 ## Log
 
+### 2026-11-15: 5-second steps, a penalty for hidden body or hands, graph as default
+
+- **5-second steps:** "Delivery over time" (graph, strips, table) now uses 5s windows instead of 10 or 15 (`Report.tsx`).
+  - Tone of voice needed 40 voiced samples per window, about 6s, so a 5s window could never be measured. `pitchSpread` and `expressiveness` (`eval/metrics.ts`) take an optional minimum, and the chart uses `T.minVoicedWindow` = 15 (about 2s of voice). The overall tone score keeps `T.minVoicedSamples`.
+  - The pace verdict now uses the whole pitch (`paceAll`), not the mean of 5s windows, which was noisy (194 vs 228 wpm on the same session).
+  - The rolling `scoreSeries` (the scores beside the recording) stays at 10s. Tone can't be judged in 5s.
+- **Penalty when the camera can't see the body or hands** (`eval/scores.ts`, `T.body.visibility`):
+  - Before, hidden hands or shoulders only made those parts unmeasured, which could even raise the body score.
+  - New `visibilityPenalty()`, subtracted in `bodyScore()`:
+    - Hands out of view: up to 20 points, ramping from 40% to 90% of speaking time (or of all frames with a face, when there's little speech).
+    - Shoulders out of view: up to 15 points, ramping from 30% to 80%.
+    - A single stretch of 15s or more without them: plus 5 each.
+    - The total is capped at 30. It applies to the final body score and the rolling series.
+  - **New live rules** (`eval/rules.ts`) so the report explains the deduction:
+    - "Hands out of view for Xs. Keep them in frame so the panel sees your gestures." Fires after 15s with the face in view and no hands; becomes a problem after 30s.
+    - "Shoulders out of view for Xs. Sit or stand back so the camera sees your upper body." Fires after 10s.
+  - **Offline check on the 15 saved sessions:**
+    - Hands hidden 81–100% of the time: minus 20 to 25.
+    - Hands visible most of the time: no penalty.
+    - The shoulders were always visible, so there was no shoulder penalty.
+- **Graph is the default view** in "Delivery over time". The order is Graph, Strips, Table. The remembered choice moved to a new key, `dt-view-v2`, so earlier picks don't hide the default.
+- **Verified:** web and eval CLI typecheck; `vite build`; headless screenshot of a real session with Graph default, 12 points for 56s, and no errors.
+
+### 2026-11-15: "Delivery over time" redesigned as status strips
+
+**Heads-up @Guanyi: I rewrote the drawing in your `web/src/components/DeliveryTimeline.tsx` (requested by me). The props, `TimelineRow`, the table view, tooltip, crosshair, playhead and click-to-seek all still work.**
+
+- **Why:** each row had its own y-scale to decode, the red and black dots had no legend, and text overlapped (the "Not measured" message on the band, the filler bars over the word "fine").
+- **Now:**
+  - Each signal is a strip with one cell per 10s (or 15s) window. The cell is coloured on target, a bit off, off target, or hatched for not measured, and its value is written inside ("232 · fast", "94%", "2 fillers", "still"). Narrow cells show just the number; the tooltip has the full value.
+  - Pauses are green circles (deliberate) and red triangles (hesitant), so the shape tells them apart as well as the colour.
+  - A legend at the top names every state.
+  - **Moments to look at:** up to 4 clickable chips for the worst off-target stretches, merged across consecutive windows (for example "Speaking too fast 0:00–0:30", "Looking away 0:50–0:56", "3 hesitant pauses"). Each jumps the recording there.
+  - The tooltip shows a status swatch per signal; the table adds "on target / a bit off / off target" per cell.
+- **Graph view kept (follow-up):** a **Strips | Graph | Table** switch, defaulting to Strips. The choice is remembered per browser in `localStorage`, wrapped in try/catch.
+  - Graph shows the line or bar charts on their own y-scales, with the target range as a shaded band (explained in the legend rather than labelled in the plot).
+  - Each point or bar is coloured by the same status as the strips.
+  - "Not measured" rows are a hatched block, so the message no longer overlaps the band.
+  - Pauses use the same circle and triangle shapes.
+  - The moments chips, crosshair, tooltip, playhead and click-to-seek work in both views. Screenshots checked in light and dark, with no overflow at 390px.
+- **New optional `TimelineRow` fields:**
+  - `status(v)`: good, warn or bad for one window. Defaults to the band.
+  - `cell(v)`: short cell text.
+  - `drift(v)`: chip phrase.
+- **Per-window rules, set in `Report.tsx` `deliveryRows`:**
+  - Eye contact: 60% or more is on target; 45–60% is a bit off.
+  - Gestures: natural is on target; still, or busy up to 0.9, is a bit off.
+  - Tone: 0.45 or more is on target; 0.3–0.45 is a bit off.
+  - Pace: 130–165 wpm is on target; 110–185 is a bit off.
+  - Fillers: 0 is on target; up to 1 per 10s is a bit off.
+- **`index.css`:** removed the unused line, dot, bar and band `.dt-*` rules; added cell, legend, moment and pause-key styles using the mint, amber and coral soft tokens. Light and dark both checked.
+- **Verified:** typecheck, eval CLI typecheck and `vite build` pass. Headless Chrome screenshots of two real sessions in light and dark: the chips merge correctly and the tooltip works. No overflow at 390px. No errors.
+
 ### 2026-11-15: "Try that answer again" (practice loop on the report)
 
 On the report you pick a weak answer (or your weakest pitch passage), the panelist asks the question again out loud, you answer on camera, and the report shows the original and the retry side by side, measured the same way.

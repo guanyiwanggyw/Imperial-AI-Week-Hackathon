@@ -146,7 +146,26 @@ export function bodyBreakdown(samples: SampleX[]): BodyBreakdown {
   return { posture: r(posture), openness: r(openness), gestures: r(gestures), selfTouch: r(selfTouch), movement: r(movement), expression: r(expression) }
 }
 
-/** Body language score: weighted average of the measurable parts of bodyBreakdown. */
+const handsOut = (s: SampleX) => s.handsVisible === 0 && s.armSpan == null
+
+/**
+ * Points off the body score when the camera can't see the upper body or the hands for long stretches. Without this,
+ * hiding them only made those parts unmeasured, so it could raise the score. Hands are judged over speaking time when
+ * there is enough of it (that is when gestures matter), otherwise over all frames with a face.
+ */
+export function visibilityPenalty(samples: SampleX[]): number {
+  const V = T.body.visibility
+  const faces = samples.filter((s) => s.face)
+  if (faces.length < 5) return 0
+  const speaking = faces.filter((s) => s.speaking)
+  const ref = speaking.length >= 3 * T.sampleHz ? speaking : faces
+  let p = V.handsOutMax * lerp(share(ref, handsOut), ...V.handsOutShare) + V.bodyOutMax * lerp(share(faces, (s) => s.bodyX === null), ...V.bodyOutShare)
+  if (longestRun(faces, handsOut) >= V.longRunSec) p += V.longRunPenalty
+  if (longestRun(faces, (s) => s.bodyX === null) >= V.longRunSec) p += V.longRunPenalty
+  return Math.round(Math.min(V.maxPenalty, p))
+}
+
+/** Body language score: weighted average of the measurable parts of bodyBreakdown, minus the visibility penalty. */
 export function bodyScore(samples: SampleX[]): number | null {
   if (samples.filter((s) => s.face).length < 5) return null
   const b = bodyBreakdown(samples)
@@ -157,7 +176,7 @@ export function bodyScore(samples: SampleX[]): number | null {
     total += b[k]! * w
     weight += w
   }
-  return weight ? Math.round(total / weight) : null
+  return weight ? Math.round(clamp(total / weight - visibilityPenalty(samples))) : null
 }
 
 /** Tone: pitch variety (monotone check), and pace from the transcript when available. */

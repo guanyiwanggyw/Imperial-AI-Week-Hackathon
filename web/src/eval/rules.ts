@@ -145,6 +145,16 @@ export class RuleEngine {
     this.streak('tilt', (s.shoulderTilt ?? 0) > T.body.tiltBad, t, T.rules.tiltSec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Shoulders tilted for ${fmt(dur)}. Stand evenly on both feet.` }))
     this.streak('turned', s.facing != null && s.facing < T.body.facingMin, t, T.rules.turnedAwaySec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Body turned away from the panel for ${fmt(dur)}` }))
     this.streak('hidden', Boolean(s.handsHidden), t, T.rules.handsHiddenSec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Hands out of sight for ${fmt(dur)}` }))
+    this.streak('nohands', s.face && s.handsVisible === 0 && s.armSpan == null && !s.handsHidden, t, T.rules.noHandsSec, (dur) => ({
+      cat: 'body',
+      severity: dur >= 2 * T.rules.noHandsSec ? 'bad' : 'warn',
+      msg: `Hands out of view for ${fmt(dur)}. Keep them in frame so the panel sees your gestures.`,
+    }))
+    this.streak('nobody', s.face && s.bodyX === null, t, T.rules.noBodySec, (dur) => ({
+      cat: 'body',
+      severity: 'warn',
+      msg: `Shoulders out of view for ${fmt(dur)}. Sit or stand back so the camera sees your upper body.`,
+    }))
     this.streak('fidget', Boolean(s.handsTogether) && s.handSpeed > T.body.handSpeedStill, t, T.rules.fidgetSec, (dur) => ({ cat: 'body', severity: 'warn', msg: `Fidgeting with your hands for ${fmt(dur)}` }))
 
     this.touchHeld = s.faceTouch ? this.touchHeld + 1 : 0

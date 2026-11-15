@@ -5,6 +5,7 @@ import { DoItBetter } from '../eval/playback/DoItBetter'
 import { eventItems, LiveNotes, ScoresAt } from '../eval/playback/FeedbackPanels'
 import { KpiTiles, ScoreHero } from '../eval/playback/ScoreOverview'
 import { LandmarkPlayback } from '../eval/playback/LandmarkPlayback'
+import { T } from '../eval/thresholds'
 import { TryAgain } from '../eval/playback/TryAgain'
 import type { DimensionScore, SessionData } from '../types'
 import { Steps, TopNav } from './Chrome'
@@ -70,7 +71,8 @@ export function Report({ session, localRecording, onNew }: Props) {
   // Timelines per signal over the pitch, in 10 s windows.
   const timelines = useMemo(() => {
     const end = session.pitchEnd
-    const size = end > 240 ? 15 : 10
+    // 5 s steps (the delivery chart and table). Tone gets a lower voiced-sample minimum per step (~2 s of voice).
+    const size = 5
     const fillerIdx = new Set(fillerIndices(pitchWords))
     const fillerTimes = pitchWords.filter((_, i) => fillerIdx.has(i)).map((w) => w.start)
     const pauses = findPauses(pitchWords, slideTimes)
@@ -83,8 +85,10 @@ export function Report({ session, localRecording, onNew }: Props) {
       size,
       eye: windows(end, size, (a, b) => eyeContactShare(session.vision, a, b)),
       gestures,
-      tonality: windows(end, size, (a, b) => expressiveness(session.audio, a, b)),
+      tonality: windows(end, size, (a, b) => expressiveness(session.audio, a, b, T.minVoicedWindow)),
       pace: windows(end, size, (a, b) => wpmBetween(pitchWords, a, b)),
+      // The verdict uses the whole pitch: 5 s steps are too short to average fairly.
+      paceAll: wpmBetween(pitchWords, 0, end),
       fillers: windows(end, size, (a, b) => fillerTimes.filter((t) => t >= a && t < b).length),
       fillerTimes,
       hesitations: pauses.filter((p) => p.kind === 'hesitation'),
@@ -467,6 +471,7 @@ type Timelines = {
   gestures: { t: number; value: number | null }[]
   tonality: { t: number; value: number | null }[]
   pace: { t: number; value: number | null }[]
+  paceAll: number | null
   fillers: { t: number; value: number | null }[]
   fillerTimes: number[]
   hesitations: { start: number; end: number }[]
@@ -485,7 +490,7 @@ function deliveryRows(tl: Timelines, duration: number): TimelineRow[] {
   const eye = mean(tl.eye)
   const gestures = mean(tl.gestures)
   const tone = mean(tl.tonality)
-  const pace = mean(tl.pace)
+  const pace = tl.paceAll ?? mean(tl.pace)
   const perMin = duration > 0 ? tl.fillerTimes.length / (duration / 60) : 0
   const paceMax = Math.max(220, ...tl.pace.map((p) => (p.value ?? 0) + 10))
   const toneWord = (v: number) => (v < 0.35 ? 'monotone' : v < 0.65 ? 'varied' : 'expressive')
@@ -502,6 +507,8 @@ function deliveryRows(tl: Timelines, duration: number): TimelineRow[] {
       band: [0.6, 1],
       bandLabel: 'target 60%+',
       format: pct,
+      status: (v) => (v >= 0.6 ? 'good' : v >= 0.45 ? 'warn' : 'bad'),
+      drift: () => 'Looking away',
       emptyText: 'Not measured: the camera could not see your face',
       verdict:
         eye === null ? NOT_MEASURED : eye >= 0.6 ? { status: 'good', text: `${pct(eye)} · on target` } : { status: eye >= 0.45 ? 'warn' : 'bad', text: `${pct(eye)} · below the 60% target` },
@@ -517,6 +524,8 @@ function deliveryRows(tl: Timelines, duration: number): TimelineRow[] {
       band: [0.05, 0.6],
       bandLabel: 'natural',
       format: gestureWord,
+      status: (v) => (v >= 0.05 && v <= 0.6 ? 'good' : v > 0.9 ? 'bad' : 'warn'),
+      drift: (v) => (v < 0.05 ? 'Very still hands' : 'Busy hands'),
       ticks: [0, 1],
       emptyText: 'Not measured: hands or face were out of view',
       verdict:
@@ -539,6 +548,9 @@ function deliveryRows(tl: Timelines, duration: number): TimelineRow[] {
       band: [0.45, 1],
       bandLabel: 'varied',
       format: toneWord,
+      status: (v) => (v >= 0.45 ? 'good' : v >= 0.3 ? 'warn' : 'bad'),
+      cell: (v) => (v < 0.45 && v >= 0.35 ? 'flat-ish' : toneWord(v)),
+      drift: () => 'Flat voice',
       ticks: [0, 1],
       emptyText: 'Not measured: no clear voice pitch was heard',
       verdict: tone === null ? NOT_MEASURED : tone >= 0.45 ? { status: 'good', text: `${toneWord(tone)} · on target` } : { status: 'warn', text: `${toneWord(tone)} · vary your pitch` },
@@ -554,6 +566,9 @@ function deliveryRows(tl: Timelines, duration: number): TimelineRow[] {
       band: [130, 165],
       bandLabel: 'target 130–165',
       format: (v) => `${Math.round(v)} wpm`,
+      status: (v) => (v >= 130 && v <= 165 ? 'good' : v >= 110 && v <= 185 ? 'warn' : 'bad'),
+      cell: (v) => `${Math.round(v)}${v > 165 ? ' · fast' : v < 130 ? ' · slow' : ''}`,
+      drift: (v) => (v > 165 ? 'Speaking too fast' : 'Speaking too slowly'),
       ticks: [60, paceMax],
       emptyText: 'Not measured: no transcript',
       verdict:
@@ -576,6 +591,9 @@ function deliveryRows(tl: Timelines, duration: number): TimelineRow[] {
       band: [0, (3 * tl.size) / 60],
       bandLabel: 'fine',
       format: (v) => `${Math.round(v)} filler${Math.round(v) === 1 ? '' : 's'}`,
+      status: (v) => (v === 0 ? 'good' : v <= Math.ceil(tl.size / 10) ? 'warn' : 'bad'),
+      cell: (v) => (v === 0 ? 'none' : `${Math.round(v)} filler${Math.round(v) === 1 ? '' : 's'}`),
+      drift: () => 'Filler words',
       ticks: [0, Math.max(3, ...tl.fillers.map((p) => p.value ?? 0))],
       verdict:
         tl.fillerTimes.length === 0

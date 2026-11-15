@@ -60,9 +60,9 @@ export function windows(end: number, size: number, fn: (from: number, to: number
 const semitones = (hz: number) => 12 * Math.log2(hz / 100)
 
 /** Pitch spread in semitones among voiced samples. Null if too little voice to judge. */
-export function pitchSpread(audio: AudioSample[], from: number, to: number): number | null {
+export function pitchSpread(audio: AudioSample[], from: number, to: number, minVoiced: number = T.minVoicedSamples): number | null {
   const voiced = audio.filter((a) => a.t >= from && a.t < to && a.pitchHz !== null).map((a) => semitones(a.pitchHz!))
-  if (voiced.length < T.minVoicedSamples) return null
+  if (voiced.length < minVoiced) return null
   // Trim the outer 10 % to ignore octave errors from the pitch tracker.
   voiced.sort((a, b) => a - b)
   const cut = Math.floor(voiced.length * 0.1)
@@ -70,8 +70,8 @@ export function pitchSpread(audio: AudioSample[], from: number, to: number): num
 }
 
 /** 0 (monotone) to 1 (expressive), from pitch spread and loudness variation. */
-export function expressiveness(audio: AudioSample[], from: number, to: number): number | null {
-  const spread = pitchSpread(audio, from, to)
+export function expressiveness(audio: AudioSample[], from: number, to: number, minVoiced: number = T.minVoicedSamples): number | null {
+  const spread = pitchSpread(audio, from, to, minVoiced)
   if (spread === null) return null
   const loud = audio.filter((a) => a.t >= from && a.t < to && a.rms > 0.01).map((a) => 20 * Math.log10(a.rms))
   const energyVar = std(loud) // dB
